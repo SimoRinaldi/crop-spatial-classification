@@ -1,0 +1,22 @@
+[
+    {
+        "name": "CLMS_HRLVLCC_CTY_S2021_R10m_E48N21_4326_V01_R00",
+        "lon": 16.401658,
+        "lat": 42.250883
+    },
+    {
+        "name": "CLMS_HRLVLCC_CTY_S2021_R10m_E48N20_4326_V01_R00",
+        "lon": 16.307926,
+        "lat": 41.35077
+    },
+    {
+        "name": "CLMS_HRLVLCC_CTY_S2021_R10m_E47N21_4326_V01_R00",
+        "lon": 15.19595,
+        "lat": 42.3202
+    },
+    {
+        "name": "CLMS_HRLVLCC_CTY_S2021_R10m_E47N20_4326_V01_R00",
+        "lon": 15.119707,
+        "lat": 41.418934
+    }
+]
