@@ -1,1 +1,2 @@
 rioxarray
+pystac_client
