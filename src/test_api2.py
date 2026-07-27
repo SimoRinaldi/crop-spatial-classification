@@ -8,6 +8,7 @@ import rioxarray
 import rasterio  # Aggiungiamo rasterio per la gestione dell'ambiente
 from pystac_client import Client
 from tqdm import tqdm
+import pandas as pd
 
 socket.setdefaulttimeout(30)
 
@@ -156,42 +157,11 @@ def process_point(point_id, lon, lat, years):
 # ==========================================
 if __name__ == "__main__":
     # Esempio per test. Puoi metterne centinaia qua dentro.
-    points = [
-        ("Vigneto_Toscana", 11.33, 43.55),
-        ("Meleto_Trentino", 11.12, 46.06),
-        ("Ulivi_Puglia", 17.65, 40.58),
-        ("Agrumeto_Sicilia", 14.88, 37.52),
-        ("Città_di_Roma", 12.48, 41.90),
-        ("Città_di_Milano", 9.19, 45.46),
-        ("Città_di_Venezia", 12.33, 45.43),
-        ("Città_di_Firenze", 11.25, 43.77),
-        ("Città_di_Napoli", 14.25, 40.85),
-        ("Città_di_Bologna", 11.34, 44.49),
-        ("Città_di_Genova", 9.19, 44.41),
-        ("Città_di_Palermo", 13.36, 38.11),
-        ("Città_di_Bari", 16.87, 41.12),
-        ("Città_di_Catania", 15.09, 37.50),
-        ("Città_di_Torino", 7.67, 45.05),
-        ("Città_di_Verona", 10.99, 45.44),
-        ("Città_di_Padova", 11.88, 45.41),
-        ("Città_di_Bergamo", 9.67, 45.70),
-        ("Città_di_Parma", 10.33, 44.80),
-        ("Città_di_Lecce", 18.17, 40.35),
-        ("Città_di_ReggioCalabria", 15.65, 38.11),
-        ("Città_di_Salerno", 14.15, 40.68),
-        ("Città_di_Foggia", 15.55, 41.46),
-        ("Città_di_Sassari", 8.56, 40.73),
-        ("Città_di_Cagliari", 9.11, 40.22),
-        ("Città_di_Ancona", 13.51, 43.60),
-        ("Città_di_Pescara", 14.21, 42.46),
-        ("Città_di_Livorno", 10.31, 43.55),
-        ("Città_di_Rimini", 12.57, 43.94),
-        ("Città_di_Siena", 11.33, 43.32),
-        ("Città_di_Arezzo", 11.88, 43.46),
-        ("Città_di_Pisa", 10.40, 43.72),
-    ]
+    df_punti = pd.read_json("points.json")
+
+    points = list(zip(df_punti['lat'], df_punti['lon'], df_punti['code']))
     
-    YEARS_TO_FETCH = [2020, 2021, 2022, 2023]
+    YEARS_TO_FETCH = [2023]
     MAX_WORKERS = 32
     
     total_start = time.perf_counter()
