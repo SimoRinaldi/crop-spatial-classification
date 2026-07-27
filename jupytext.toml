@@ -1,0 +1,2 @@
+# Jupytext configuration
+default_jupytext_formats = "ipynb,py:percent"
