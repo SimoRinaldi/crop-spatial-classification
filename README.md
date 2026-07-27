@@ -18,10 +18,18 @@ Per evitare di committare i file binari pesanti `.ipynb` su Git (con output, imm
 
 I notebook vengono sincronizzati automaticamente in script Python trasparenti a Git nella cartella `notebooks/` in formato `percent` (`.py`).
 
-### ⚙️ Come funziona nel workflow quotidiano
+### 🔌 Configurazione VS Code (Consigliata)
+
+Per far sì che il file `.py` venga aggiornato automaticamente ad ogni salvataggio (`Ctrl+S`):
+
+1. Installa l'estensione VS Code **[Jupytext](https://marketplace.visualstudio.com/items?itemName=mwouts.jupytext)** (`mwouts.jupytext`).
+2. Quando salvi un file `.ipynb`, l'estensione aggiornerà automaticamente il file `.py` speculare.
+3. Fai il commit su Git del solo file `.py` aggiornato.
+
+### ⚙️ Come funziona il workflow
 
 1. **File tracciati da Git**: Solo i file `.py` (e la configurazione `jupytext.toml`) sono tracciati da Git. I file `.ipynb` sono ignorati da `.gitignore`.
-2. **Sviluppo locale**: Quando salvi un notebook `.ipynb` in VS Code o JupyterLab, Jupytext aggiornerà automaticamente il corrispettivo file `.py`.
+2. **Sviluppo locale**: Lavori sui notebook `.ipynb` normalmente. L'estensione VS Code / Jupyter aggiornerà il file `.py`.
 
 ### 🔄 Comandi Utili per Jupytext
 
@@ -35,13 +43,7 @@ I notebook vengono sincronizzati automaticamente in script Python trasparenti a 
   jupytext --set-formats ipynb,py:percent notebooks/mio_nuovo_notebook.ipynb
   ```
 
-### ⚓ Git Hook Automatico (Cross-Platform)
-
-È stato configurato un hook `pre-commit` compatibile sia con **Linux / macOS** che con **Windows** (`Git Bash` / `CMD` / `PowerShell`).
-
-Ad ogni `git commit`, l'hook:
-1. Individua automaticamente l'ambiente Python (`.venv/bin/jupytext` su Linux/macOS o `.venv/Scripts/jupytext` su Windows).
-2. Sincronizza i file `.ipynb` modificati nei rispettivi script `.py`.
-3. Aggiunge automaticamente i file `.py` aggiornati al commit.
-
-Non dovrai preoccuparti di eseguire manualmente `jupytext --sync` prima di fare il commit.
+* **Sincronizzare manualmente i file se necessario**:
+  ```bash
+  jupytext --sync notebooks/*.py
+  ```
