@@ -1,3 +1,4 @@
 rioxarray
 pystac_client
 jupytext
+nbstripout
