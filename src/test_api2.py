@@ -1,3 +1,35 @@
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.19.5
+# ---
+
+# %%
+# -*- coding: utf-8 -*-
+# ---
+# jupyter:
+#   jupytext:
+#     cell_metadata_filter: -all
+#     custom_cell_magics: kql
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.11.2
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
+# ---
+
+# %%
+# # !pip install rioxarray rasterio pystac-client pandas tqdm
+
+# %%
 import os
 import time
 import random
@@ -9,12 +41,15 @@ import rasterio  # Aggiungiamo rasterio per la gestione dell'ambiente
 from pystac_client import Client
 from tqdm import tqdm
 import pandas as pd
+from pathlib import Path
 
+# %%
 socket.setdefaulttimeout(30)
 
+# %%
 #TODO: aggiungere logger, aggiungere tracker di successi e fallimenti, 
 # aggiungere logica per caricare putni e determinare quali anni andare a scaricare 
-#! sentinel-2-l2a disponibile da fine 2018 circa, occhio, tagliare magari e tenere solo 2019 in avanti
+# # ! sentinel-2-l2a disponibile da fine 2018 circa, occhio, tagliare magari e tenere solo 2019 in avanti
 # aggiungere merge finale per ogni punto: un .tif per ogni timestep
 # aggiungere bande mancanti
 # aggiungere in output oltre al merge un file metadata json, con info sul campione
@@ -25,6 +60,7 @@ socket.setdefaulttimeout(30)
 # ==========================================
 STAC_API_URL = "https://earth-search.aws.element84.com/v1"
 
+# %%
 # Accelerazioni critiche per file COG su bucket pubblici AWS
 os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
@@ -36,6 +72,7 @@ os.environ["GDAL_HTTP_CONNECTTIMEOUT"] = "30"
 os.environ["GDAL_HTTP_MAX_RETRY"] = "3"
 
 
+# %%
 BAND_MAPPING = {
     "B02_10m": "blue",
     "B03_10m": "green",
@@ -45,8 +82,10 @@ BAND_MAPPING = {
     "B12_20m": "swir22"
 }
 
+# %%
 BUFFER_DEG = 0.005
 
+# %%
 # ==========================================
 # 2. Funzioni Core
 # ==========================================
@@ -68,6 +107,7 @@ def get_best_monthly_items(stac_items):
             
     return monthly_best
 
+# %%
 def search_stac_with_retry(client, bbox, start_date, end_date, max_retries=5):
     """Esegue la ricerca STAC gestendo i ban temporanei (HTTP 429) dell'API."""
     for attempt in range(max_retries):
@@ -88,6 +128,7 @@ def search_stac_with_retry(client, bbox, start_date, end_date, max_retries=5):
             print(f"⚠️ [API Timeout/429] Ritento tra {sleep_time:.1f} sec... ({e})")
             time.sleep(sleep_time)
 
+# %%
 def process_point(point_id, lon, lat, years):
     """Worker isolato: usa un proprio ambiente GDAL indipendente."""
     time.sleep(random.uniform(0.1, 2.0))
@@ -152,12 +193,13 @@ def process_point(point_id, lon, lat, years):
 
     return point_id, downloaded_count, failed_operations
 
+# %%
 # ==========================================
 # 3. Wrapper Parallelizzato Principale
 # ==========================================
 if __name__ == "__main__":
     # Esempio per test. Puoi metterne centinaia qua dentro.
-    df_punti = pd.read_json("points.json")
+    df_punti = pd.read_json(Path("../data/points.json"))
 
     points = list(zip(df_punti['lat'], df_punti['lon'], df_punti['code']))
     
@@ -203,3 +245,4 @@ if __name__ == "__main__":
             print(f"  - {p}: {len(errs)} errori (es: {errs[0][:50]}...)")
     else:
         print("\nTutti i punti scaricati senza errori.")
+
