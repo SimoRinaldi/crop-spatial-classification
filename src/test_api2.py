@@ -1,35 +1,3 @@
-# ---
-# jupyter:
-#   jupytext:
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#       jupytext_version: 1.19.5
-# ---
-
-# %%
-# -*- coding: utf-8 -*-
-# ---
-# jupyter:
-#   jupytext:
-#     cell_metadata_filter: -all
-#     custom_cell_magics: kql
-#     text_representation:
-#       extension: .py
-#       format_name: percent
-#       format_version: '1.3'
-#       jupytext_version: 1.11.2
-#   kernelspec:
-#     display_name: Python 3 (ipykernel)
-#     language: python
-#     name: python3
-# ---
-
-# %%
-# # !pip install rioxarray rasterio pystac-client pandas tqdm
-
-# %%
 import os
 import time
 import random
@@ -59,18 +27,6 @@ socket.setdefaulttimeout(30)
 # 1. Ottimizzazioni GDAL Globali
 # ==========================================
 STAC_API_URL = "https://earth-search.aws.element84.com/v1"
-
-# %%
-# Accelerazioni critiche per file COG su bucket pubblici AWS
-os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
-os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
-os.environ["VSI_CACHE"] = "TRUE"
-# Ferma GDAL se il server S3 non risponde entro 30 secondi
-os.environ["GDAL_HTTP_TIMEOUT"] = "30"
-os.environ["GDAL_HTTP_CONNECTTIMEOUT"] = "30"
-# Dici a GDAL di riprovare internamente fino a 3 volte se cade la linea
-os.environ["GDAL_HTTP_MAX_RETRY"] = "3"
-
 
 # %%
 BAND_MAPPING = {
@@ -129,12 +85,12 @@ def search_stac_with_retry(client, bbox, start_date, end_date, max_retries=5):
             time.sleep(sleep_time)
 
 # %%
-def process_point(point_id, lon, lat, years):
+def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download"):
     """Worker isolato: usa un proprio ambiente GDAL indipendente."""
     time.sleep(random.uniform(0.1, 2.0))
     
     bbox = [lon - BUFFER_DEG, lat - BUFFER_DEG, lon + BUFFER_DEG, lat + BUFFER_DEG]
-    point_dir = f"./test_aws_download/{point_id}"
+    point_dir = os.path.join(base_out_dir, str(point_id))
     os.makedirs(point_dir, exist_ok=True)
     
     downloaded_count = 0
@@ -197,25 +153,30 @@ def process_point(point_id, lon, lat, years):
 # ==========================================
 # 3. Wrapper Parallelizzato Principale
 # ==========================================
-if __name__ == "__main__":
-    # Esempio per test. Puoi metterne centinaia qua dentro.
-    df_punti = pd.read_json(Path("../data/points.json"))
+def download_sentinel_data(points_df, years_to_fetch=[2023], max_workers=32, out_dir="./test_aws_download"):
+    # %%
+    # Accelerazioni critiche per file COG su bucket pubblici AWS
+    os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
+    os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
+    os.environ["VSI_CACHE"] = "TRUE"
+    # Ferma GDAL se il server S3 non risponde entro 30 secondi
+    os.environ["GDAL_HTTP_TIMEOUT"] = "30"
+    os.environ["GDAL_HTTP_CONNECTTIMEOUT"] = "30"
+    # Dici a GDAL di riprovare internamente fino a 3 volte se cade la linea
+    os.environ["GDAL_HTTP_MAX_RETRY"] = "3"
 
-    points = list(zip(df_punti['lat'], df_punti['lon'], df_punti['code']))
-    
-    YEARS_TO_FETCH = [2023]
-    MAX_WORKERS = 32
+    points = list(zip(points_df['lat'], points_df['lon'], points_df['code']))
     
     total_start = time.perf_counter()
     failed_points_summary = {}
     total_tasks = len(points)
     
-    print(f"Avvio in modalità MULTIPROCESSING. Elaborazione di {total_tasks} colture (Core impiegati: {MAX_WORKERS})...")
+    print(f"Avvio in modalità MULTIPROCESSING. Elaborazione di {total_tasks} colture (Core impiegati: {max_workers})...")
 
     # CAMBIAMENTO CRITICO: Usa ProcessPoolExecutor al posto di ThreadPoolExecutor
-    with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         future_to_point = {
-            executor.submit(process_point, pid, lon, lat, YEARS_TO_FETCH): pid 
+            executor.submit(process_point, pid, lon, lat, years_to_fetch, out_dir): pid 
             for pid, lon, lat in points
         }
         
@@ -245,4 +206,5 @@ if __name__ == "__main__":
             print(f"  - {p}: {len(errs)} errori (es: {errs[0][:50]}...)")
     else:
         print("\nTutti i punti scaricati senza errori.")
-
+        
+    return failed_points_summary
