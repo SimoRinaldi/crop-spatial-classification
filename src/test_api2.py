@@ -4,10 +4,11 @@ import random
 import socket
 from datetime import datetime
 import concurrent.futures
+import multiprocessing
 import rioxarray
-import rasterio  # Aggiungiamo rasterio per la gestione dell'ambiente
+import rasterio
 from pystac_client import Client
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import pandas as pd
 from pathlib import Path
 
@@ -69,7 +70,7 @@ def search_stac_with_retry(client, bbox, start_date, end_date, max_retries=5):
     for attempt in range(max_retries):
         try:
             search = client.search(
-                collections=["sentinel-2-l2a"], #se l2a non è disponibile provate l1c, altrimenti se vedete che l1c fa schifo usate dati del 2019, dubito cambierà tantissimo
+                collections=["sentinel-2-l2a"],
                 bbox=bbox,
                 datetime=f"{start_date}/{end_date}",
                 query={"eo:cloud_cover": {"lt": 60}}
@@ -77,17 +78,15 @@ def search_stac_with_retry(client, bbox, start_date, end_date, max_retries=5):
             return list(search.items())
         except Exception as e:
             if attempt == max_retries - 1:
-                raise e # Se è l'ultimo tentativo, alza bandiera bianca
+                raise e
             
-            # Exponential backoff: aspetta 2s, poi 4s, poi 8s + un po' di casualità
             sleep_time = (2 ** attempt) + random.uniform(0.1, 1.5)
-            print(f"⚠️ [API Timeout/429] Ritento tra {sleep_time:.1f} sec... ({e})")
             time.sleep(sleep_time)
 
 # %%
-def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download"):
+def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download", progress_queue=None):
     """Worker isolato: usa un proprio ambiente GDAL indipendente."""
-    time.sleep(random.uniform(0.1, 2.0))
+    time.sleep(random.uniform(0.05, 0.5))
     
     bbox = [lon - BUFFER_DEG, lat - BUFFER_DEG, lon + BUFFER_DEG, lat + BUFFER_DEG]
     point_dir = os.path.join(base_out_dir, str(point_id))
@@ -101,17 +100,15 @@ def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download")
     except Exception as e:
         return point_id, downloaded_count, [f"Connessione fallita: {e}"]
 
-    # Configurazione di isolamento per GDAL: ogni processo ha il suo motore pulito
     gdal_config = {
         "AWS_NO_SIGN_REQUEST": "YES",
         "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
-        "VSI_CACHE": "FALSE",  # FONDAMENTALE: spegnere la cache condivisa nei multiprocesso
+        "VSI_CACHE": "FALSE",
         "GDAL_HTTP_TIMEOUT": "30",
         "GDAL_HTTP_CONNECTTIMEOUT": "30",
         "GDAL_HTTP_MAX_RETRY": "3"
     }
 
-    # Avvolgiamo tutto il lavoro geospaziale nel rasterio.Env()
     with rasterio.Env(**gdal_config):
         for year in years:
             try:
@@ -132,6 +129,9 @@ def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download")
                         out_path = os.path.join(point_dir, f"{month}_{item.id}_{cdse_name}.tif")
                         
                         if os.path.exists(out_path):
+                            downloaded_count += 1
+                            if progress_queue is not None:
+                                progress_queue.put(('file', 1, point_id))
                             continue 
                         
                         for attempt in range(3):
@@ -140,10 +140,14 @@ def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download")
                                 cropped_ds = ds.rio.clip_box(*bbox, crs="EPSG:4326")
                                 cropped_ds.rio.to_raster(out_path, compress="deflate", predictor=2, tiled=True)
                                 downloaded_count += 1
+                                if progress_queue is not None:
+                                    progress_queue.put(('file', 1, point_id))
                                 break
                             except Exception as e:
                                 if attempt == 2:
                                     failed_operations.append(f"Errore {month} {aws_name}: {e}")
+                                    if progress_queue is not None:
+                                        progress_queue.put(('file', 1, point_id))
                                 else:
                                     time.sleep(1.5)
 
@@ -154,50 +158,89 @@ def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download")
 # 3. Wrapper Parallelizzato Principale
 # ==========================================
 def download_sentinel_data(points_df, years_to_fetch=[2023], max_workers=32, out_dir="./test_aws_download"):
-    # %%
     # Accelerazioni critiche per file COG su bucket pubblici AWS
     os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
     os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
     os.environ["VSI_CACHE"] = "TRUE"
-    # Ferma GDAL se il server S3 non risponde entro 30 secondi
     os.environ["GDAL_HTTP_TIMEOUT"] = "30"
     os.environ["GDAL_HTTP_CONNECTTIMEOUT"] = "30"
-    # Dici a GDAL di riprovare internamente fino a 3 volte se cade la linea
     os.environ["GDAL_HTTP_MAX_RETRY"] = "3"
 
-    points = list(zip(points_df['lat'], points_df['lon'], points_df['code']))
-    
+    points = []
+    for idx, row in points_df.iterrows():
+        lat_val = float(row['lat'])
+        lon_val = float(row['lon'])
+        
+        # Auto-correzione se lat e lon sono stati invertiti (in Italia: lat ~ 41° N, lon ~ 15° E)
+        if abs(lat_val) < abs(lon_val):
+            lat_val, lon_val = lon_val, lat_val
+
+        point_id = f"point_{idx}"
+        
+        points.append((point_id, lon_val, lat_val))
+
+    total_expected_files = len(points) * len(years_to_fetch) * 12 * len(BAND_MAPPING)
     total_start = time.perf_counter()
     failed_points_summary = {}
-    total_tasks = len(points)
+    completed_points_count = 0
     
-    print(f"Avvio in modalità MULTIPROCESSING. Elaborazione di {total_tasks} colture (Core impiegati: {max_workers})...")
+    print(f"Avvio MULTIPROCESSING: {len(points)} punti, {max_workers} worker.")
+    print(f"Stima totale file TIF da scaricare: ~{total_expected_files} file.")
 
-    # CAMBIAMENTO CRITICO: Usa ProcessPoolExecutor al posto di ThreadPoolExecutor
+    manager = multiprocessing.Manager()
+    progress_queue = manager.Queue()
+
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         future_to_point = {
-            executor.submit(process_point, pid, lon, lat, years_to_fetch, out_dir): pid 
+            executor.submit(process_point, pid, lon, lat, years_to_fetch, out_dir, progress_queue): pid 
             for pid, lon, lat in points
         }
         
-        with tqdm(total=total_tasks, desc="Elaborazione", unit="punto") as pbar:
-            for future in concurrent.futures.as_completed(future_to_point):
-                pid = future_to_point[future]
-                try:
-                    point_id, count, errors = future.result()
-                    if errors:
-                        failed_points_summary[point_id] = errors
-                    
-                    pbar.set_postfix({"Ultimo": str(point_id)[:10], "Tif": count})
-                    
-                except Exception as exc:
-                    failed_points_summary[pid] = [str(exc)]
+        total_futures = len(future_to_point)
+        
+        with tqdm(total=total_expected_files, desc="Scaricamento TIF", unit="file") as pbar:
+            completed_futures = 0
+            
+            while completed_futures < total_futures:
+                # Svuota i messaggi dalla queue in tempo reale
+                while not progress_queue.empty():
+                    try:
+                        msg_type, count, pid_item = progress_queue.get_nowait()
+                        if msg_type == 'file':
+                            pbar.update(count)
+                            pbar.set_postfix({"Punti": f"{completed_points_count}/{total_futures}", "Ultimo": str(pid_item)[:15]})
+                    except Exception:
+                        break
                 
-                pbar.update(1)
+                # Controlla quanti punti/future hanno terminato completamente
+                done_futures = [f for f in future_to_point if f.done()]
+                if len(done_futures) > completed_futures:
+                    for f in done_futures:
+                        pid = future_to_point[f]
+                        if not hasattr(f, '_processed_result'):
+                            setattr(f, '_processed_result', True)
+                            completed_points_count += 1
+                            try:
+                                point_id, count_res, errors = f.result()
+                                if errors:
+                                    failed_points_summary[point_id] = errors
+                            except Exception as exc:
+                                failed_points_summary[pid] = [str(exc)]
+                    completed_futures = len(done_futures)
+                
+                time.sleep(0.1)
+
+            # Processa eventuali messaggi residui nella queue
+            while not progress_queue.empty():
+                try:
+                    msg_type, count, pid_item = progress_queue.get_nowait()
+                    if msg_type == 'file':
+                        pbar.update(count)
+                except Exception:
+                    break
 
     total_end = time.perf_counter()
     
-    # 4. A processo finito, stampiamo il riepilogo
     print(f"\n✅ Esecuzione Totale Terminata in {total_end - total_start:.2f} secondi")
     
     if failed_points_summary:
