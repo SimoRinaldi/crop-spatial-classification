@@ -7,6 +7,7 @@ import concurrent.futures
 import multiprocessing
 import rioxarray
 import rasterio
+from rasterio.merge import merge
 import xarray as xr
 from pystac_client import Client
 from tqdm.auto import tqdm
@@ -150,28 +151,39 @@ def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download",
             ref_ds = None
             for fpath in tif_files:
                 if "B02" in fpath or "10m" in fpath:
-                    ref_ds = rioxarray.open_rasterio(fpath)
-                    break
+                    try:
+                        ref_ds = rioxarray.open_rasterio(fpath)
+                        break
+                    except Exception:
+                        pass
             if ref_ds is None:
                 ref_ds = rioxarray.open_rasterio(tif_files[0])
 
+            ref_crs = ref_ds.rio.crs
+
             datasets = []
             for fpath in tif_files:
-                with rioxarray.open_rasterio(fpath) as ds:
-                    if "band" in ds.dims and ds.sizes["band"] == 1:
-                        ds_sq = ds.squeeze("band", drop=True)
-                    else:
-                        ds_sq = ds
-                    if ds_sq.rio.shape != ref_ds.rio.shape or ds_sq.rio.crs != ref_ds.rio.crs:
-                        ds_sq = ds_sq.rio.reproject_match(ref_ds)
-                    datasets.append(ds_sq.load())
+                try:
+                    with rioxarray.open_rasterio(fpath) as ds:
+                        if "band" in ds.dims and ds.sizes["band"] == 1:
+                            ds_sq = ds.squeeze("band", drop=True)
+                        else:
+                            ds_sq = ds
+                        if ds_sq.rio.shape != ref_ds.rio.shape or ds_sq.rio.crs != ref_crs:
+                            ds_sq = ds_sq.rio.reproject_match(ref_ds)
+                        datasets.append(ds_sq.load())
+                except Exception as file_err:
+                    failed_operations.append(f"Errore lettura {os.path.basename(fpath)}: {file_err}")
 
             ref_ds.close()
 
             if datasets:
-                stacked = xr.concat(datasets, dim="band")
+                stacked = xr.concat(datasets, dim="band", join="override")
                 stacked.coords["band"] = list(range(1, len(datasets) + 1))
                 
+                if ref_crs:
+                    stacked.rio.write_crs(ref_crs, inplace=True)
+
                 merged_out_path = os.path.join(point_dir, f"sentinel2_data_{nome_file}.tif")
                 stacked.rio.to_raster(merged_out_path, compress="deflate", predictor=2, tiled=True)
         except Exception as e:
@@ -287,5 +299,40 @@ def download_sentinel_data(
             print(f"  - {p}: {len(errs)} errori (es: {errs[0][:50]}...)")
     else:
         print("\nTutti i punti scaricati senza errori.")
-        
+
+    # ==========================================
+    # Merge Globale di TUTTI i punti in un unico file finale
+    # ==========================================
+    global_merged_filename = f"sentinel2_data_{nome_file}.tif"
+    global_merged_filepath = os.path.join(out_dir, global_merged_filename)
+
+    point_merged_files = []
+    for pid, _, _ in points:
+        p_file = os.path.join(out_dir, pid, f"sentinel2_data_{nome_file}.tif")
+        if os.path.exists(p_file):
+            point_merged_files.append(p_file)
+
+    if point_merged_files:
+        try:
+            print(f"\n🧩 Avvio Merge Globale dei {len(point_merged_files)} punti in un unico file...")
+            srcs = [rasterio.open(f) for f in point_merged_files]
+            mosaic, out_trans = merge(srcs)
+            out_meta = srcs[0].meta.copy()
+            out_meta.update({
+                "driver": "GTiff",
+                "height": mosaic.shape[1],
+                "width": mosaic.shape[2],
+                "transform": out_trans,
+                "compress": "deflate",
+                "predictor": 2,
+                "tiled": True
+            })
+            with rasterio.open(global_merged_filepath, "w", **out_meta) as dst:
+                dst.write(mosaic)
+            for s in srcs:
+                s.close()
+            print(f"✅ FILE UNICO GLOBALE GENERATO CON SUCCESSO: {global_merged_filepath}")
+        except Exception as merge_err:
+            print(f"⚠️ Impossibile generare il file unico globale: {merge_err}")
+
     return failed_points_summary
