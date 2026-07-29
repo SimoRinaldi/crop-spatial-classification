@@ -7,29 +7,19 @@ import concurrent.futures
 import multiprocessing
 import rioxarray
 import rasterio
+import xarray as xr
 from pystac_client import Client
 from tqdm.auto import tqdm
 import pandas as pd
 from pathlib import Path
 
-# %%
 socket.setdefaulttimeout(30)
 
-# %%
-#TODO: aggiungere logger, aggiungere tracker di successi e fallimenti, 
-# aggiungere logica per caricare putni e determinare quali anni andare a scaricare 
-# # ! sentinel-2-l2a disponibile da fine 2018 circa, occhio, tagliare magari e tenere solo 2019 in avanti
-# aggiungere merge finale per ogni punto: un .tif per ogni timestep
-# aggiungere bande mancanti
-# aggiungere in output oltre al merge un file metadata json, con info sul campione
-    # dataset di provenienza, coordinate, label, data del campionamento
-    # info sull'osservazione satellitare: data, cloud cover...
 # ==========================================
 # 1. Ottimizzazioni GDAL Globali
 # ==========================================
 STAC_API_URL = "https://earth-search.aws.element84.com/v1"
 
-# %%
 BAND_MAPPING = {
     "B02_10m": "blue",
     "B03_10m": "green",
@@ -39,10 +29,8 @@ BAND_MAPPING = {
     "B12_20m": "swir22"
 }
 
-# %%
 BUFFER_DEG = 0.005
 
-# %%
 # ==========================================
 # 2. Funzioni Core
 # ==========================================
@@ -64,7 +52,6 @@ def get_best_monthly_items(stac_items):
             
     return monthly_best
 
-# %%
 def search_stac_with_retry(client, bbox, start_date, end_date, max_retries=5):
     """Esegue la ricerca STAC gestendo i ban temporanei (HTTP 429) dell'API."""
     for attempt in range(max_retries):
@@ -83,8 +70,7 @@ def search_stac_with_retry(client, bbox, start_date, end_date, max_retries=5):
             sleep_time = (2 ** attempt) + random.uniform(0.1, 1.5)
             time.sleep(sleep_time)
 
-# %%
-def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download", progress_queue=None):
+def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download", progress_queue=None, nome_file="lombardia_2023_monthly"):
     """Worker isolato: usa un proprio ambiente GDAL indipendente."""
     time.sleep(random.uniform(0.05, 0.5))
     
@@ -151,13 +137,64 @@ def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download",
                                 else:
                                     time.sleep(1.5)
 
+    # ==========================================
+    # Merge dei file TIF in un unico file finale
+    # ==========================================
+    tif_files = sorted([
+        os.path.join(point_dir, f) for f in os.listdir(point_dir)
+        if f.endswith(".tif") and not f.startswith("sentinel2_data_")
+    ])
+
+    if tif_files:
+        try:
+            ref_ds = None
+            for fpath in tif_files:
+                if "B02" in fpath or "10m" in fpath:
+                    ref_ds = rioxarray.open_rasterio(fpath)
+                    break
+            if ref_ds is None:
+                ref_ds = rioxarray.open_rasterio(tif_files[0])
+
+            datasets = []
+            for fpath in tif_files:
+                with rioxarray.open_rasterio(fpath) as ds:
+                    if "band" in ds.dims and ds.sizes["band"] == 1:
+                        ds_sq = ds.squeeze("band", drop=True)
+                    else:
+                        ds_sq = ds
+                    if ds_sq.rio.shape != ref_ds.rio.shape or ds_sq.rio.crs != ref_ds.rio.crs:
+                        ds_sq = ds_sq.rio.reproject_match(ref_ds)
+                    datasets.append(ds_sq.load())
+
+            ref_ds.close()
+
+            if datasets:
+                stacked = xr.concat(datasets, dim="band")
+                stacked.coords["band"] = list(range(1, len(datasets) + 1))
+                
+                merged_out_path = os.path.join(point_dir, f"sentinel2_data_{nome_file}.tif")
+                stacked.rio.to_raster(merged_out_path, compress="deflate", predictor=2, tiled=True)
+        except Exception as e:
+            failed_operations.append(f"Errore durante il merge TIF: {e}")
+
     return point_id, downloaded_count, failed_operations
 
-# %%
 # ==========================================
 # 3. Wrapper Parallelizzato Principale
 # ==========================================
-def download_sentinel_data(points_df, years_to_fetch=[2023], max_workers=32, out_dir="./test_aws_download"):
+def download_sentinel_data(
+    points_df, 
+    years_to_fetch=[2023], 
+    max_workers=32, 
+    out_dir="./test_aws_download",
+    zona="unknown",
+    tipo_aggregazione="monthly",
+    nome_file=None
+):
+    if nome_file is None:
+        years_str = "_".join(map(str, sorted(years_to_fetch)))
+        nome_file = f"{zona}_{years_str}_{tipo_aggregazione}"
+
     # Accelerazioni critiche per file COG su bucket pubblici AWS
     os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
     os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
@@ -186,13 +223,14 @@ def download_sentinel_data(points_df, years_to_fetch=[2023], max_workers=32, out
     
     print(f"Avvio MULTIPROCESSING: {len(points)} punti, {max_workers} worker.")
     print(f"Stima totale file TIF da scaricare: ~{total_expected_files} file.")
+    print(f"File di output mergiato per ciascun punto: sentinel2_data_{nome_file}.tif")
 
     manager = multiprocessing.Manager()
     progress_queue = manager.Queue()
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         future_to_point = {
-            executor.submit(process_point, pid, lon, lat, years_to_fetch, out_dir, progress_queue): pid 
+            executor.submit(process_point, pid, lon, lat, years_to_fetch, out_dir, progress_queue, nome_file): pid 
             for pid, lon, lat in points
         }
         
