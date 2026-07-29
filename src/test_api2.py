@@ -160,6 +160,7 @@ def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download",
                 ref_ds = rioxarray.open_rasterio(tif_files[0])
 
             ref_crs = ref_ds.rio.crs
+            ref_crs_str = str(ref_crs)
 
             datasets = []
             for fpath in tif_files:
@@ -169,7 +170,7 @@ def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download",
                             ds_sq = ds.squeeze("band", drop=True)
                         else:
                             ds_sq = ds
-                        if ds_sq.rio.shape != ref_ds.rio.shape or ds_sq.rio.crs != ref_crs:
+                        if ds_sq.rio.shape != ref_ds.rio.shape or str(ds_sq.rio.crs) != ref_crs_str:
                             ds_sq = ds_sq.rio.reproject_match(ref_ds)
                         datasets.append(ds_sq.load())
                 except Exception as file_err:
