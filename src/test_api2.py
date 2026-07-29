@@ -2,6 +2,8 @@ import os
 import time
 import random
 import socket
+import tempfile
+import shutil
 from datetime import datetime
 import concurrent.futures
 import multiprocessing
@@ -202,11 +204,14 @@ def download_sentinel_data(
     out_dir="./test_aws_download",
     zona="unknown",
     tipo_aggregazione="monthly",
-    nome_file=None
+    nome_file=None,
+    keep_intermediate_files=False
 ):
     if nome_file is None:
         years_str = "_".join(map(str, sorted(years_to_fetch)))
         nome_file = f"{zona}_{years_str}_{tipo_aggregazione}"
+
+    os.makedirs(out_dir, exist_ok=True)
 
     # Accelerazioni critiche per file COG su bucket pubblici AWS
     os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
@@ -236,104 +241,116 @@ def download_sentinel_data(
     
     print(f"Avvio MULTIPROCESSING: {len(points)} punti, {max_workers} worker.")
     print(f"Stima totale file TIF da scaricare: ~{total_expected_files} file.")
-    print(f"File di output mergiato per ciascun punto: sentinel2_data_{nome_file}.tif")
+
+    # Se non vogliamo mantenere i file intermedi, usiamo una cartella temporanea
+    if not keep_intermediate_files:
+        temp_dir_obj = tempfile.TemporaryDirectory(prefix="sentinel_tmp_")
+        work_dir = temp_dir_obj.name
+    else:
+        temp_dir_obj = None
+        work_dir = out_dir
 
     manager = multiprocessing.Manager()
     progress_queue = manager.Queue()
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-        future_to_point = {
-            executor.submit(process_point, pid, lon, lat, years_to_fetch, out_dir, progress_queue, nome_file): pid 
-            for pid, lon, lat in points
-        }
-        
-        total_futures = len(future_to_point)
-        
-        with tqdm(total=total_expected_files, desc="Scaricamento TIF", unit="file") as pbar:
-            completed_futures = 0
+    try:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+            future_to_point = {
+                executor.submit(process_point, pid, lon, lat, years_to_fetch, work_dir, progress_queue, nome_file): pid 
+                for pid, lon, lat in points
+            }
             
-            while completed_futures < total_futures:
-                # Svuota i messaggi dalla queue in tempo reale
+            total_futures = len(future_to_point)
+            
+            with tqdm(total=total_expected_files, desc="Scaricamento TIF", unit="file") as pbar:
+                completed_futures = 0
+                
+                while completed_futures < total_futures:
+                    # Svuota i messaggi dalla queue in tempo reale
+                    while not progress_queue.empty():
+                        try:
+                            msg_type, count, pid_item = progress_queue.get_nowait()
+                            if msg_type == 'file':
+                                pbar.update(count)
+                                pbar.set_postfix({"Punti": f"{completed_points_count}/{total_futures}", "Ultimo": str(pid_item)[:15]})
+                        except Exception:
+                            break
+                    
+                    # Controlla quanti punti/future hanno terminato completamente
+                    done_futures = [f for f in future_to_point if f.done()]
+                    if len(done_futures) > completed_futures:
+                        for f in done_futures:
+                            pid = future_to_point[f]
+                            if not hasattr(f, '_processed_result'):
+                                setattr(f, '_processed_result', True)
+                                completed_points_count += 1
+                                try:
+                                    point_id, count_res, errors = f.result()
+                                    if errors:
+                                        failed_points_summary[point_id] = errors
+                                except Exception as exc:
+                                    failed_points_summary[pid] = [str(exc)]
+                        completed_futures = len(done_futures)
+                    
+                    time.sleep(0.1)
+
+                # Processa eventuali messaggi residui nella queue
                 while not progress_queue.empty():
                     try:
                         msg_type, count, pid_item = progress_queue.get_nowait()
                         if msg_type == 'file':
                             pbar.update(count)
-                            pbar.set_postfix({"Punti": f"{completed_points_count}/{total_futures}", "Ultimo": str(pid_item)[:15]})
                     except Exception:
                         break
-                
-                # Controlla quanti punti/future hanno terminato completamente
-                done_futures = [f for f in future_to_point if f.done()]
-                if len(done_futures) > completed_futures:
-                    for f in done_futures:
-                        pid = future_to_point[f]
-                        if not hasattr(f, '_processed_result'):
-                            setattr(f, '_processed_result', True)
-                            completed_points_count += 1
-                            try:
-                                point_id, count_res, errors = f.result()
-                                if errors:
-                                    failed_points_summary[point_id] = errors
-                            except Exception as exc:
-                                failed_points_summary[pid] = [str(exc)]
-                    completed_futures = len(done_futures)
-                
-                time.sleep(0.1)
 
-            # Processa eventuali messaggi residui nella queue
-            while not progress_queue.empty():
-                try:
-                    msg_type, count, pid_item = progress_queue.get_nowait()
-                    if msg_type == 'file':
-                        pbar.update(count)
-                except Exception:
-                    break
+        total_end = time.perf_counter()
+        
+        print(f"\n✅ Esecuzione Totale Terminata in {total_end - total_start:.2f} secondi")
+        
+        if failed_points_summary:
+            print("\n⚠️ ATTENZIONE: Alcuni punti hanno registrato errori e necessitano di un retry:")
+            for p, errs in failed_points_summary.items():
+                print(f"  - {p}: {len(errs)} errori (es: {errs[0][:50]}...)")
+        else:
+            print("\nTutti i punti scaricati senza errori.")
 
-    total_end = time.perf_counter()
-    
-    print(f"\n✅ Esecuzione Totale Terminata in {total_end - total_start:.2f} secondi")
-    
-    if failed_points_summary:
-        print("\n⚠️ ATTENZIONE: Alcuni punti hanno registrato errori e necessitano di un retry:")
-        for p, errs in failed_points_summary.items():
-            print(f"  - {p}: {len(errs)} errori (es: {errs[0][:50]}...)")
-    else:
-        print("\nTutti i punti scaricati senza errori.")
+        # ==========================================
+        # Merge Globale di TUTTI i punti in un unico file finale
+        # ==========================================
+        global_merged_filename = f"sentinel2_data_{nome_file}.tif"
+        global_merged_filepath = os.path.join(out_dir, global_merged_filename)
 
-    # ==========================================
-    # Merge Globale di TUTTI i punti in un unico file finale
-    # ==========================================
-    global_merged_filename = f"sentinel2_data_{nome_file}.tif"
-    global_merged_filepath = os.path.join(out_dir, global_merged_filename)
+        point_merged_files = []
+        for pid, _, _ in points:
+            p_file = os.path.join(work_dir, pid, f"sentinel2_data_{nome_file}.tif")
+            if os.path.exists(p_file):
+                point_merged_files.append(p_file)
 
-    point_merged_files = []
-    for pid, _, _ in points:
-        p_file = os.path.join(out_dir, pid, f"sentinel2_data_{nome_file}.tif")
-        if os.path.exists(p_file):
-            point_merged_files.append(p_file)
+        if point_merged_files:
+            try:
+                print(f"\n🧩 Avvio Merge Globale dei {len(point_merged_files)} punti in un unico file...")
+                srcs = [rasterio.open(f) for f in point_merged_files]
+                mosaic, out_trans = merge(srcs)
+                out_meta = srcs[0].meta.copy()
+                out_meta.update({
+                    "driver": "GTiff",
+                    "height": mosaic.shape[1],
+                    "width": mosaic.shape[2],
+                    "transform": out_trans,
+                    "compress": "deflate",
+                    "predictor": 2,
+                    "tiled": True
+                })
+                with rasterio.open(global_merged_filepath, "w", **out_meta) as dst:
+                    dst.write(mosaic)
+                for s in srcs:
+                    s.close()
+                print(f"✅ FILE UNICO GLOBALE GENERATO CON SUCCESSO: {global_merged_filepath}")
+            except Exception as merge_err:
+                print(f"⚠️ Impossibile generare il file unico globale: {merge_err}")
 
-    if point_merged_files:
-        try:
-            print(f"\n🧩 Avvio Merge Globale dei {len(point_merged_files)} punti in un unico file...")
-            srcs = [rasterio.open(f) for f in point_merged_files]
-            mosaic, out_trans = merge(srcs)
-            out_meta = srcs[0].meta.copy()
-            out_meta.update({
-                "driver": "GTiff",
-                "height": mosaic.shape[1],
-                "width": mosaic.shape[2],
-                "transform": out_trans,
-                "compress": "deflate",
-                "predictor": 2,
-                "tiled": True
-            })
-            with rasterio.open(global_merged_filepath, "w", **out_meta) as dst:
-                dst.write(mosaic)
-            for s in srcs:
-                s.close()
-            print(f"✅ FILE UNICO GLOBALE GENERATO CON SUCCESSO: {global_merged_filepath}")
-        except Exception as merge_err:
-            print(f"⚠️ Impossibile generare il file unico globale: {merge_err}")
+    finally:
+        if temp_dir_obj is not None:
+            temp_dir_obj.cleanup()
 
     return failed_points_summary
