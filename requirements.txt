@@ -5,3 +5,4 @@ nbstripout
 pandas
 scikit-learn
 pyarrow
+tqdm

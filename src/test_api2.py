@@ -242,13 +242,9 @@ def download_sentinel_data(
     print(f"Avvio MULTIPROCESSING: {len(points)} punti, {max_workers} worker.")
     print(f"Stima totale file TIF da scaricare: ~{total_expected_files} file.")
 
-    # Se non vogliamo mantenere i file intermedi, usiamo una cartella temporanea
-    if not keep_intermediate_files:
-        temp_dir_obj = tempfile.TemporaryDirectory(prefix="sentinel_tmp_")
-        work_dir = temp_dir_obj.name
-    else:
-        temp_dir_obj = None
-        work_dir = out_dir
+    # Salvataggio diretto dei punti nella cartella di output
+    temp_dir_obj = None
+    work_dir = out_dir
 
     manager = multiprocessing.Manager()
     progress_queue = manager.Queue()
@@ -313,41 +309,6 @@ def download_sentinel_data(
                 print(f"  - {p}: {len(errs)} errori (es: {errs[0][:50]}...)")
         else:
             print("\nTutti i punti scaricati senza errori.")
-
-        # ==========================================
-        # Merge Globale di TUTTI i punti in un unico file finale
-        # ==========================================
-        global_merged_filename = f"sentinel2_data_{nome_file}.tif"
-        global_merged_filepath = os.path.join(out_dir, global_merged_filename)
-
-        point_merged_files = []
-        for pid, _, _ in points:
-            p_file = os.path.join(work_dir, pid, f"sentinel2_data_{nome_file}.tif")
-            if os.path.exists(p_file):
-                point_merged_files.append(p_file)
-
-        if point_merged_files:
-            try:
-                print(f"\n🧩 Avvio Merge Globale dei {len(point_merged_files)} punti in un unico file...")
-                srcs = [rasterio.open(f) for f in point_merged_files]
-                mosaic, out_trans = merge(srcs)
-                out_meta = srcs[0].meta.copy()
-                out_meta.update({
-                    "driver": "GTiff",
-                    "height": mosaic.shape[1],
-                    "width": mosaic.shape[2],
-                    "transform": out_trans,
-                    "compress": "deflate",
-                    "predictor": 2,
-                    "tiled": True
-                })
-                with rasterio.open(global_merged_filepath, "w", **out_meta) as dst:
-                    dst.write(mosaic)
-                for s in srcs:
-                    s.close()
-                print(f"✅ FILE UNICO GLOBALE GENERATO CON SUCCESSO: {global_merged_filepath}")
-            except Exception as merge_err:
-                print(f"⚠️ Impossibile generare il file unico globale: {merge_err}")
 
     finally:
         if temp_dir_obj is not None:
