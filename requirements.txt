@@ -6,3 +6,5 @@ pandas
 scikit-learn
 pyarrow
 tqdm
+matplotlib
+seaborn
