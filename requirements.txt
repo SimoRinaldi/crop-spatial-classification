@@ -3,3 +3,5 @@ pystac_client
 jupytext
 nbstripout
 pandas
+scikit-learn
+pyarrow
