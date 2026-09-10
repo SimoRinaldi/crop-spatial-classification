@@ -75,6 +75,29 @@ def search_stac_with_retry(client, bbox, start_date, end_date, max_retries=5):
 
 def process_point(point_id, lon, lat, years, base_out_dir="./test_aws_download", progress_queue=None, nome_file="lombardia_2023_monthly"):
     """Worker isolato: usa un proprio ambiente GDAL indipendente."""
+
+    # =========================================================================
+    # SKIP ISTANTANEO: se il campo è già stato elaborato, salta il dowload
+    point_dir = os.path.join(base_out_dir, str(point_id))
+    os.makedirs(point_dir, exist_ok=True)
+
+    expected_files_per_point = len(years) * 12 * len(BAND_MAPPING)
+
+    if os.path.exists(point_dir):
+        # cerca i files 'sentinel2_data_*.tif'
+        existing_merged = [
+            os.path.join(point_dir, f)
+            for f in os.listdir(point_dir)
+            if f.startswith("sentinel2_data_") and f.endswith(".tif")
+        ]
+        # se il file esiste ed è > 50 KB
+        if existing_merged and os.path.getsize(existing_merged[0]) > 50000:
+            if progress_queue is not None:
+                # aggiorna la barra di avanzamento
+                progress_queue.put(("file", expected_files_per_point, point_id))
+            return point_id, expected_files_per_point, []
+    # ===========================================================================
+
     time.sleep(random.uniform(0.05, 0.5))
     
     bbox = [lon - BUFFER_DEG, lat - BUFFER_DEG, lon + BUFFER_DEG, lat + BUFFER_DEG]
