@@ -180,7 +180,10 @@ def extract_features_from_monthly_stack(monthly_stack):
     features_dict["NDVI_diff_lug_apr"] = ndvi_series[6] - ndvi_series[3]   # Luglio (6) - Aprile (3)
     features_dict["NDVI_diff_apr_gen"] = ndvi_series[3] - ndvi_series[0]   # Aprile (3) - Gennaio (0)
     features_dict["NDVI_diff_set_lug"] = ndvi_series[8] - ndvi_series[6]   # Settembre (8) - Luglio (6)
-    features_dict["Orzo_Wheat_Ratio"] = ndvi_series[3] / (ndvi_series[4] + 0.01) # Aprile / Maggio
+    
+    # Protezione divisione per zero in Orzo_Wheat_Ratio su pixel non vegetati / bordi
+    denom_orzo = np.where(np.abs(ndvi_series[4] + 0.01) < 1e-5, 1e-5, ndvi_series[4] + 0.01)
+    features_dict["Orzo_Wheat_Ratio"] = np.clip(ndvi_series[3] / denom_orzo, -50.0, 50.0)
     features_dict["NDVI_senescence_rate"] = ndvi_series[5] - ndvi_series[4] # Giugno (5) - Maggio (4)
 
     # -------------------------------------------------------------
@@ -193,8 +196,8 @@ def extract_features_from_monthly_stack(monthly_stack):
     swir1_b11 = features_dict["SWIR1_B11"]
     swir2_b12 = features_dict["SWIR2_B12"]
 
-    features_dict["SWIR_NIR_ratio"] = np.where(nir_b8 > 0, swir1_b11 / (nir_b8 + 0.001), 0.0)
-    features_dict["SWIR_Cellulose_ratio"] = np.where(swir1_b11 > 0, swir2_b12 / (swir1_b11 + 0.001), 0.0)
+    features_dict["SWIR_NIR_ratio"] = np.where(nir_b8 > 0, np.clip(swir1_b11 / (nir_b8 + 0.001), 0.0, 50.0), 0.0)
+    features_dict["SWIR_Cellulose_ratio"] = np.where(swir1_b11 > 0, np.clip(swir2_b12 / (swir1_b11 + 0.001), 0.0, 50.0), 0.0)
 
     # -------------------------------------------------------------
     # 6. FENOLOGIA AVANZATA
@@ -213,6 +216,10 @@ def extract_features_from_monthly_stack(monthly_stack):
     # -------------------------------------------------------------
     feature_columns = [features_dict[name] for name in FEATURE_NAMES]
     features_matrix = np.column_stack(feature_columns).astype(np.float32)
+
+    # Pulizia totale di eventuali NaN, inf e overflow per scikit-learn
+    features_matrix = np.nan_to_num(features_matrix, nan=0.0, posinf=0.0, neginf=0.0)
+    features_matrix = np.clip(features_matrix, -1e5, 1e5).astype(np.float32)
 
     return features_dict, features_matrix
 
