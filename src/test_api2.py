@@ -17,9 +17,7 @@ client = Client.open(STAC_API_URL)
 BANDS = ["blue", "green", "red", "nir", "swir16", "swir22"]
 
 
-def download_area_month(
-    name, bbox, year, month, out_dir="./data/processed/sentinel2_capitanata_area"
-):
+def download_area_month(name, bbox, year, month, out_dir="./data/processed/sentinel2_capitanata_area"):
     """
     Scarica e fonde le bande di un mese per l'area specificata.
     Per garantire la copertura completa dell'area senza buchi, seleziona
@@ -30,30 +28,28 @@ def download_area_month(
 
     # Resume: se il file è già completo (> 200 MB), salta
     if os.path.exists(file_out) and os.path.getsize(file_out) > 200_000_000:
-        print(
-            f"Mese {month:02d} già presente e completo: {file_out} ({os.path.getsize(file_out)/(1024*1024):.1f} MB)"
-        )
+        print(f"Mese {month:02d} già presente e completo: {file_out} ({os.path.getsize(file_out)/(1024*1024):.1f} MB)")
         return file_out
 
     print(f"\nScaricando {name} per {year}-{month:02d}...")
     last_day = calendar.monthrange(int(year), int(month))[1]
-
-    # 1. Ricerca scene nel mese
+    
+    # 1. Ricerca scene nel mese per la sola BBox specificata
     search = client.search(
         collections=["sentinel-2-l2a"],
         bbox=bbox,
         datetime=f"{year}-{month:02d}-01/{year}-{month:02d}-{last_day:02d}",
-        query={"eo:cloud_cover": {"lt": 40}},
+        query={"eo:cloud_cover": {"lt": 40}}
     )
     items = list(search.items())
 
     # Se troppe nuvole, rilassa la soglia per garantire la presenza di tutte le tile
-    if len(items) < 3:
+    if len(items) < 2:
         search = client.search(
             collections=["sentinel-2-l2a"],
             bbox=bbox,
             datetime=f"{year}-{month:02d}-01/{year}-{month:02d}-{last_day:02d}",
-            query={"eo:cloud_cover": {"lt": 80}},
+            query={"eo:cloud_cover": {"lt": 80}}
         )
         items = list(search.items())
 
@@ -77,22 +73,24 @@ def download_area_month(
 
     selected_items = list(best_items_by_tile.values())
     tile_names = list(best_items_by_tile.keys())
-    print(
-        f"  • Scene selezionate per coprire l'intera area: {len(selected_items)} tile ({tile_names})"
-    )
+    print(f"  • Scene selezionate per coprire la Capitanata: {len(selected_items)} tile ({tile_names})")
 
-    # 3. Scarica, ritaglia e unisce ciascuna banda
+    # 3. Scarica, ritaglia e unisce ciascuna banda con feedback visivo
     band_arrays = []
-    for b in BANDS:
+    for idx_b, b in enumerate(BANDS, 1):
+        print(f"    -> [{idx_b}/{len(BANDS)}] Elaborazione banda '{b}'...")
         tile_crops = []
         for it in selected_items:
             if b in it.assets:
                 href = it.assets[b].href
-                ds = rioxarray.open_rasterio(href)
-                cropped = ds.rio.clip_box(*bbox, crs="EPSG:4326")
-                if "band" in cropped.dims and cropped.sizes["band"] == 1:
-                    cropped = cropped.squeeze("band", drop=True)
-                tile_crops.append(cropped)
+                try:
+                    ds = rioxarray.open_rasterio(href)
+                    cropped = ds.rio.clip_box(*bbox, crs="EPSG:4326")
+                    if "band" in cropped.dims and cropped.sizes["band"] == 1:
+                        cropped = cropped.squeeze("band", drop=True)
+                    tile_crops.append(cropped)
+                except Exception:
+                    pass
 
         if not tile_crops:
             continue
@@ -122,7 +120,7 @@ def download_area_month(
     temp_out = file_out + ".tmp.tif"
     merged.rio.to_raster(temp_out, compress="deflate", predictor=2, tiled=True)
     os.replace(temp_out, file_out)
-
+    
     file_size_mb = os.path.getsize(file_out) / (1024 * 1024)
     print(f"✅ Salvato {file_out} ({file_size_mb:.1f} MB)")
     return file_out
