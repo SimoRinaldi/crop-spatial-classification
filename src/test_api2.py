@@ -64,22 +64,31 @@ def download_area_month(
         print(f"⚠️ Nessuna immagine trovata per {year}-{month:02d}")
         return None
 
-    # 2. Per ciascuna tile MGRS dell'area, seleziona la scena con minor copertura nuvolosa del mese
-    best_items_by_tile = {}
+    # 2. Per ciascuna tile MGRS, seleziona la scena a copertura intera con minor nuvolosità.
+    # Evita di selezionare passaggi orbitali parziali che hanno un cloud_cover basso solo perché
+    # il satellite ha sfiorato l'8% della tile (lasciando l'altro 92% vuoto/nero).
+    items_by_tile = {}
     for it in items:
         tile_key = (
             it.properties.get("grid:code")
             or it.properties.get("s2:mgrs_tile")
             or it.id[:10]
         )
-        cloud = it.properties.get("eo:cloud_cover", 100)
-        if tile_key not in best_items_by_tile:
-            best_items_by_tile[tile_key] = it
-        elif cloud < best_items_by_tile[tile_key].properties.get("eo:cloud_cover", 100):
-            best_items_by_tile[tile_key] = it
+        items_by_tile.setdefault(tile_key, []).append(it)
 
-    selected_items = list(best_items_by_tile.values())
-    tile_names = list(best_items_by_tile.keys())
+    selected_items = []
+    tile_names = []
+    for tile_key, tile_items in items_by_tile.items():
+        min_nodata = min(it.properties.get("s2:nodata_pixel_percentage", 0) for it in tile_items)
+        # Filtra solo le scene che hanno copertura massima per quella tile (entro +15% dal minimo nodata)
+        candidates = [
+            it for it in tile_items
+            if it.properties.get("s2:nodata_pixel_percentage", 0) <= min_nodata + 15
+        ]
+        best_it = min(candidates, key=lambda it: it.properties.get("eo:cloud_cover", 100))
+        selected_items.append(best_it)
+        tile_names.append(tile_key)
+
     print(f"  • Scene selezionate per coprire la Capitanata: {len(selected_items)} tile ({tile_names})")
 
     # 3. Scarica, ritaglia e unisce ciascuna banda con feedback visivo
