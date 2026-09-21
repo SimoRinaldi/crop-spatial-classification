@@ -20,33 +20,40 @@ BANDS = ["blue", "green", "red", "nir", "swir16", "swir22"]
 def download_area_month(
     name, bbox, year, month, out_dir="./data/processed/sentinel2_capitanata_area"
 ):
-    """Scarica e fonde le bande di un mese per l'area specificata."""
+    """
+    Scarica e fonde le bande di un mese per l'area specificata.
+    Per garantire la copertura completa dell'area senza buchi, seleziona
+    la scena più limpida del mese per ciascuna tile MGRS che interseca la BBox.
+    """
     os.makedirs(out_dir, exist_ok=True)
     file_out = os.path.join(out_dir, f"{name}_{year}_{month:02d}.tif")
 
-    if os.path.exists(file_out) and os.path.getsize(file_out) > 50_000_000:
-        print(f"Mese {month:02d} già presente: {file_out}")
+    # Resume: se il file è già completo (> 200 MB), salta
+    if os.path.exists(file_out) and os.path.getsize(file_out) > 200_000_000:
+        print(
+            f"Mese {month:02d} già presente e completo: {file_out} ({os.path.getsize(file_out)/(1024*1024):.1f} MB)"
+        )
         return file_out
 
-    print(f"Scaricando {name} per {year}-{month:02d}...")
+    print(f"\nScaricando {name} per {year}-{month:02d}...")
     last_day = calendar.monthrange(int(year), int(month))[1]
 
-    # Ricerca scene limpide nel mese
+    # 1. Ricerca scene nel mese
     search = client.search(
         collections=["sentinel-2-l2a"],
         bbox=bbox,
         datetime=f"{year}-{month:02d}-01/{year}-{month:02d}-{last_day:02d}",
-        query={"eo:cloud_cover": {"lt": 30}},
+        query={"eo:cloud_cover": {"lt": 40}},
     )
     items = list(search.items())
 
-    # Se non trova nulla sotto il 30% di nuvole, rilassa la soglia
-    if not items:
+    # Se troppe nuvole, rilassa la soglia per garantire la presenza di tutte le tile
+    if len(items) < 3:
         search = client.search(
             collections=["sentinel-2-l2a"],
             bbox=bbox,
             datetime=f"{year}-{month:02d}-01/{year}-{month:02d}-{last_day:02d}",
-            query={"eo:cloud_cover": {"lt": 70}},
+            query={"eo:cloud_cover": {"lt": 80}},
         )
         items = list(search.items())
 
@@ -54,27 +61,31 @@ def download_area_month(
         print(f"⚠️ Nessuna immagine trovata per {year}-{month:02d}")
         return None
 
-    # Raggruppa le tile per data (giorno di passaggio) e prende la data più limpida
-    items_by_date = {}
+    # 2. Per ciascuna tile MGRS dell'area, seleziona la scena con minor copertura nuvolosa del mese
+    best_items_by_tile = {}
     for it in items:
-        d = it.properties.get("datetime", "")[:10]
-        items_by_date.setdefault(d, []).append(it)
-
-    best_date = min(
-        items_by_date.keys(),
-        key=lambda d: sum(
-            x.properties.get("eo:cloud_cover", 100) for x in items_by_date[d]
+        tile_key = (
+            it.properties.get("grid:code")
+            or it.properties.get("s2:mgrs_tile")
+            or it.id[:10]
         )
-        / len(items_by_date[d]),
-    )
-    day_items = items_by_date[best_date]
-    print(f"  • Data selezionata: {best_date} ({len(day_items)} scene)")
+        cloud = it.properties.get("eo:cloud_cover", 100)
+        if tile_key not in best_items_by_tile:
+            best_items_by_tile[tile_key] = it
+        elif cloud < best_items_by_tile[tile_key].properties.get("eo:cloud_cover", 100):
+            best_items_by_tile[tile_key] = it
 
-    # Scarica, ritaglia e allinea ciascuna banda
+    selected_items = list(best_items_by_tile.values())
+    tile_names = list(best_items_by_tile.keys())
+    print(
+        f"  • Scene selezionate per coprire l'intera area: {len(selected_items)} tile ({tile_names})"
+    )
+
+    # 3. Scarica, ritaglia e unisce ciascuna banda
     band_arrays = []
     for b in BANDS:
         tile_crops = []
-        for it in day_items:
+        for it in selected_items:
             if b in it.assets:
                 href = it.assets[b].href
                 ds = rioxarray.open_rasterio(href)
@@ -86,10 +97,10 @@ def download_area_month(
         if not tile_crops:
             continue
 
-        # Unisce le tile adiacenti (mosaico) se l'area attraversa 2 scene
+        # Mosaico di tutte le tile dell'area per questa banda
         merged_band = merge_arrays(tile_crops) if len(tile_crops) > 1 else tile_crops[0]
 
-        # Ricampiona le bande a 20m (swir16, swir22) sulla griglia della prima banda a 10m (blue)
+        # Allinea risoluzione (20m -> 10m) sulla prima banda
         if band_arrays and (
             merged_band.rio.shape != band_arrays[0].rio.shape
             or merged_band.rio.crs != band_arrays[0].rio.crs
@@ -102,14 +113,18 @@ def download_area_month(
         print(f"⚠️ Nessuna banda scaricata per {year}-{month:02d}")
         return None
 
-    # Merge delle 6 bande nel singolo TIF multibanda
+    # 4. Merge delle 6 bande nel singolo GeoTIFF multibanda
     merged = xarray.concat(band_arrays, dim="band")
     merged.coords["band"] = list(range(1, len(band_arrays) + 1))
     if band_arrays[0].rio.crs:
         merged.rio.write_crs(band_arrays[0].rio.crs, inplace=True)
 
-    merged.rio.to_raster(file_out, compress="deflate", predictor=2, tiled=True)
-    print(f"✅ Salvato {file_out}")
+    temp_out = file_out + ".tmp.tif"
+    merged.rio.to_raster(temp_out, compress="deflate", predictor=2, tiled=True)
+    os.replace(temp_out, file_out)
+
+    file_size_mb = os.path.getsize(file_out) / (1024 * 1024)
+    print(f"✅ Salvato {file_out} ({file_size_mb:.1f} MB)")
     return file_out
 
 
@@ -127,5 +142,5 @@ def download_area(
         f = download_area_month(name, bbox, year, m, out_dir=out_dir)
         if f:
             downloaded.append(f)
-    print(f"Finito! Scaricati {len(downloaded)}/{len(list(months))} file.")
+    print(f"\nFinito! Scaricati {len(downloaded)}/{len(list(months))} file.")
     return downloaded
