@@ -17,7 +17,14 @@ client = Client.open(STAC_API_URL)
 BANDS = ["blue", "green", "red", "nir", "swir16", "swir22"]
 
 
-def download_area_month(name, bbox, year, month, out_dir="./data/processed/sentinel2_capitanata_area"):
+def download_area_month(
+    name,
+    bbox,
+    year,
+    month,
+    out_dir="./data/processed/sentinel2_capitanata_area",
+    overwrite=False,
+):
     """
     Scarica e fonde le bande di un mese per l'area specificata.
     Per garantire la copertura completa dell'area senza buchi, seleziona
@@ -26,8 +33,8 @@ def download_area_month(name, bbox, year, month, out_dir="./data/processed/senti
     os.makedirs(out_dir, exist_ok=True)
     file_out = os.path.join(out_dir, f"{name}_{year}_{month:02d}.tif")
 
-    # Resume: se il file è già completo (> 200 MB), salta
-    if os.path.exists(file_out) and os.path.getsize(file_out) > 200_000_000:
+    # Resume: se il file è già completo (> 200 MB), salta (a meno di overwrite=True)
+    if not overwrite and os.path.exists(file_out) and os.path.getsize(file_out) > 200_000_000:
         print(f"Mese {month:02d} già presente e completo: {file_out} ({os.path.getsize(file_out)/(1024*1024):.1f} MB)")
         return file_out
 
@@ -88,6 +95,7 @@ def download_area_month(name, bbox, year, month, out_dir="./data/processed/senti
                     cropped = ds.rio.clip_box(*bbox, crs="EPSG:4326")
                     if "band" in cropped.dims and cropped.sizes["band"] == 1:
                         cropped = cropped.squeeze("band", drop=True)
+                    cropped.rio.write_nodata(0, inplace=True)
                     tile_crops.append(cropped)
                 except Exception:
                     pass
@@ -95,8 +103,8 @@ def download_area_month(name, bbox, year, month, out_dir="./data/processed/senti
         if not tile_crops:
             continue
 
-        # Mosaico di tutte le tile dell'area per questa banda
-        merged_band = merge_arrays(tile_crops) if len(tile_crops) > 1 else tile_crops[0]
+        # Mosaico di tutte le tile dell'area per questa banda (nodata=0 evita che i bordi neri sovrascrivano i dati validi)
+        merged_band = merge_arrays(tile_crops, nodata=0) if len(tile_crops) > 1 else tile_crops[0]
 
         # Allinea risoluzione (20m -> 10m) sulla prima banda
         if band_arrays and (
@@ -116,6 +124,7 @@ def download_area_month(name, bbox, year, month, out_dir="./data/processed/senti
     merged.coords["band"] = list(range(1, len(band_arrays) + 1))
     if band_arrays[0].rio.crs:
         merged.rio.write_crs(band_arrays[0].rio.crs, inplace=True)
+    merged.rio.write_nodata(0, inplace=True)
 
     temp_out = file_out + ".tmp.tif"
     merged.rio.to_raster(temp_out, compress="deflate", predictor=2, tiled=True)
@@ -132,12 +141,13 @@ def download_area(
     year="2023",
     months=range(1, 13),
     out_dir="./data/processed/sentinel2_capitanata_area",
+    overwrite=False,
 ):
     """Scarica tutti i mesi richiesti per l'area data."""
     print(f"Inizio download area '{name}' per l'anno {year}...")
     downloaded = []
     for m in months:
-        f = download_area_month(name, bbox, year, m, out_dir=out_dir)
+        f = download_area_month(name, bbox, year, m, out_dir=out_dir, overwrite=overwrite)
         if f:
             downloaded.append(f)
     print(f"\nFinito! Scaricati {len(downloaded)}/{len(list(months))} file.")
