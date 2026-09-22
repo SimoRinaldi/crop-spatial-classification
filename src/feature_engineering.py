@@ -103,7 +103,7 @@ def extract_features_from_monthly_stack(monthly_stack):
     Prende i 12 mesi di immagini satellitari e calcola tutte le feature per ciascun pixel in parallelo
 
     Input: np.ndarray
-        array NumPy di forma (12, 6, h, w) oppure (12, 6, n_pixel).
+        array NumPy di forma (12, 6, h, w) oppure (12, 6, n_points).
         - indice 0: 12 mesi
         - indice 1: 6 bande ordinate:
             0: Blu (B02)
@@ -116,21 +116,19 @@ def extract_features_from_monthly_stack(monthly_stack):
 
     Output: dict, np.ndarray
         - dizionario contenente tutte le feature calcolate.
-        - matrice 2D di forma (h*w, n_feature) oppure (n_pixel, n_feature).
+        - matrice 2D di forma (h*w, n_feature) oppure (n_points, n_feature).
     """
     orig_shape = monthly_stack.shape
-    # normalizza la forma a (12, 6, n_pixel) per calcoli rapidi
+    # normalizza la forma a (12, 6, n_points) per calcoli rapidi
     if len(orig_shape) == 4:
-        n_months, n_bands, h, w = orig_shape
+        n_months, n_bands = orig_shape
         flat_stack = monthly_stack.reshape(n_months, n_bands, -1).astype(np.float32)
-        is_spatial = True
     elif len(orig_shape) == 3:
-        n_months, n_bands, n_pixels = orig_shape
+        n_months, n_bands = orig_shape
         flat_stack = monthly_stack.astype(np.float32)
-        is_spatial = False
     else:
         raise ValueError(
-            "Il parametro di input deve avere 4 dimensioni (12, 6, h, w) o 3 (12, 6, n_pixel)"
+            "Il parametro di input deve avere 4 dimensioni (12, 6, h, w) o 3 (12, 6, n_points)"
         )
 
     if n_months != 12 or n_bands != 6:
@@ -138,7 +136,6 @@ def extract_features_from_monthly_stack(monthly_stack):
             f"Attesi 12 mesi e 6 bande, trovati: {n_months} mesi e {n_bands} bande."
         )
 
-    n_pixels = flat_stack.shape[2]
     features_dict = {}
 
     # ------------------------------------------------------
