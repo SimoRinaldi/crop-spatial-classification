@@ -121,10 +121,10 @@ def extract_features_from_monthly_stack(monthly_stack):
     orig_shape = monthly_stack.shape
     # normalizza la forma a (12, 6, n_points) per calcoli rapidi
     if len(orig_shape) == 4:
-        n_months, n_bands = orig_shape
+        n_months, n_bands = orig_shape[:2]
         flat_stack = monthly_stack.reshape(n_months, n_bands, -1).astype(np.float32)
     elif len(orig_shape) == 3:
-        n_months, n_bands = orig_shape
+        n_months, n_bands = orig_shape[:2]
         flat_stack = monthly_stack.astype(np.float32)
     else:
         raise ValueError(
