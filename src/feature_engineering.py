@@ -1,108 +1,125 @@
-"""
-Modulo per il calcolo unificato delle Feature Spazio-Temporali (Fenologiche e Spettrali).
-Condiviso tra il Notebook 03 (Dataset Creation) e il Notebook 05 (Spatial Visualization).
-"""
+# Script per il calcolo delle feature.
 
 from pathlib import Path
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 
-# Elenco ufficiale e ordinato delle 51 feature del modello
-FEATURE_NAMES = [
-    # 1. Medie annuali delle 6 bande grezze
-    "Blu_B02",
-    "Verde_B03",
-    "Rosso_B04",
-    "NIR_B08",
-    "SWIR1_B11",
-    "SWIR2_B12",
-    # 2. Serie temporale NDVI mensile (12 mesi)
-    *[f"NDVI_{m:02d}" for m in range(1, 13)],
-    # 3. Serie temporale NDWI mensile (12 mesi)
-    *[f"NDWI_{m:02d}" for m in range(1, 13)],
-    # 4. Indicatori statistici di vigore vegetativo (NDVI)
-    "NDVI_max",
-    "NDVI_min",
-    "NDVI_amp",
-    "Peak_Month",
-    "NDVI_mean",
-    "NDVI_std",
-    # 5. Differenziali stagionali e fenologici (NDVI)
-    "NDVI_diff_lug_apr",
-    "NDVI_diff_apr_gen",
-    "NDVI_diff_set_lug",
-    "Orzo_Wheat_Ratio",
-    "NDVI_senescence_rate",
-    # 6. Indicatori di contenuto idrico (NDWI)
-    "NDWI_mean",
-    "NDWI_diff_lug_gen",
-    # 7. Rapporti spettrali SWIR / Struttura / Lignina
-    "SWIR_NIR_ratio",
-    "SWIR_Cellulose_ratio",
-    # 8. Indicatori fenologici avanzati
-    "NDVI_winter",
-    "NDVI_summer_winter_diff",
-    "NDVI_AUC",
-    "Active_Months_Count",
-    "Senescence_May_Apr",
-    "Greenup_Mar_Feb",
+# elenco ordinato e dettagliato delle feature
+FEATURE_LIST = [
+    # Colori e bande satellitari (medie di tutto l'anno)
+    "Blu_B02",  # riflettanza della luce blu
+    "Verde_B03",  # riflettanza della luce verde
+    "Rosso_B04",  # riflettanza della luce rossa (assorbita dalle piante vive)
+    "NIR_B08",  # vicino infrarosso (le foglie sane e dense ne riflettono tantissimo)
+    "SWIR1_B11",  # infrarosso a onde corte 1 (sensibile all'umidità del suolo e delle foglie)
+    "SWIR2_B12",  # infrarosso a onde corte 2 (sensibile a residui secchi, rami e cellulosa)
+    # Vigore vegetativo mese per mese (ndvi da gennaio a dicembre)
+    # l'ndvi misura quanto la pianta è verde e rigogliosa (vicino a 1 = molto verde, vicino a 0 = terra nuda)
+    "NDVI_01",
+    "NDVI_02",
+    "NDVI_03",
+    "NDVI_04",
+    "NDVI_05",
+    "NDVI_06",
+    "NDVI_07",
+    "NDVI_08",
+    "NDVI_09",
+    "NDVI_10",
+    "NDVI_11",
+    "NDVI_12",
+    # Contenuto d'acqua mese per mese (ndwi da gennaio a dicembre)
+    # l'ndwi misura il contenuto idrico delle foglie (più è alto, più la pianta è idratata)
+    "NDWI_01",
+    "NDWI_02",
+    "NDWI_03",
+    "NDWI_04",
+    "NDWI_05",
+    "NDWI_06",
+    "NDWI_07",
+    "NDWI_08",
+    "NDWI_09",
+    "NDWI_10",
+    "NDWI_11",
+    "NDWI_12",
+    # Statistiche annuali del vigore verde (ndvi)
+    "NDVI_max",  # il massimo picco di verde raggiunto durante l'anno
+    "NDVI_min",  # il minimo di verde nell'anno (inverno o dopo il raccolto)
+    "NDVI_amp",  # escursione annuale (differenza tra massimo e minimo vigore)
+    "Peak_Month",  # il mese dell'anno (1-12) in cui la pianta è stata al massimo splendore
+    "NDVI_mean",  # media del vigore sull'anno (alta per sempreverdi come ulivi, bassa per colture brevi)
+    "NDVI_std",  # quanto varia il vigore nel tempo (stabile per boschi/ulivi, altalenante per cereali)
+    # Differenze tra mesi chiave (aiutano a distinguere le colture)
+    "NDVI_diff_lug_apr",  # differenza luglio-aprile (il grano a luglio è secco/raccolto, il pomodoro è verde)
+    "NDVI_diff_apr_gen",  # crescita primaverile (differenza tra aprile e gennaio)
+    "NDVI_diff_set_lug",  # comportamento a fine estate (differenza tra settembre e luglio)
+    "Orzo_Wheat_Ratio",  # confronto tra aprile e maggio (l'orzo matura e ingiallisce prima del grano duro)
+    "NDVI_senescence_rate",  # velocità con cui la pianta si secca tra maggio e giugno
+    # Statistiche sull'idratazione (ndwi)
+    "NDWI_mean",  # idratazione media durante tutto l'anno
+    "NDWI_diff_lug_gen",  # disidratazione estiva rispetto all'inverno
+    # Struttura della pianta e residui secchi
+    "SWIR_NIR_ratio",  # rapporto tra secchezza e vigore fogliare
+    "SWIR_Cellulose_ratio",  # presenza di parti legnose o paglia (distingue alberi da piante erbacee)
+    # Indicatori del ciclo di vita (fenologia)
+    "NDVI_winter",  # vigore medio invernale (gennaio, febbraio, dicembre)
+    "NDVI_summer_winter_diff",  # contrasto tra estate e inverno
+    "NDVI_AUC",  # biomassa totale prodotta nell'anno (area totale sotto la curva di crescita)
+    "Active_Months_Count",  # quanti mesi all'anno il campo è rimasto effettivamente verde
+    "Senescence_May_Apr",  # ingiallimento tra aprile e maggio
+    "Greenup_Mar_Feb",  # risveglio vegetativo tra febbraio e marzo
 ]
 
 
 def fill_missing_series(series):
     """
-    Interpola i valori mancanti (zero o NaN) lungo l'asse temporale (asse 0).
-    Equivalente a .interpolate().bfill().ffill() di pandas ma ottimizzato in NumPy.
-    
-    series: array di forma (12, ...)
+    Interpola i valori mancanti (zero o nan) lungo l'asse temporale dei 12 mesi
     """
     filled = series.copy()
     n_months = filled.shape[0]
-    
-    # Maschera dei valori non validi (zero o NaN)
-    invalid = np.isnan(filled) | (filled == 0.0)
-    
-    # 1. Forward-fill lungo i mesi
+
+    def is_missing(data):
+        return np.isnan(data) | (data == 0.0)
+
+    # fill-forward
+    # se il mese corrente è vuoto, copia il valore del mese precedente
     for m in range(1, n_months):
-        filled[m] = np.where(invalid[m], filled[m - 1], filled[m])
-    
-    # 2. Backward-fill lungo i mesi
+        is_empty = is_missing(filled[m])
+        filled[m] = np.where(is_empty, filled[m - 1], filled[m])
+
+    # fill-backward
+    # se il mese corrente è vuoto, copia il valore del mese successivo
     for m in range(n_months - 2, -1, -1):
-        filled[m] = np.where(np.isnan(filled[m]) | (filled[m] == 0.0), filled[m + 1], filled[m])
-        
-    # Se rimangono pixel ancora NaN (tutti e 12 i mesi vuoti), sostituisce con 0
-    filled = np.nan_to_num(filled, nan=0.0)
-    return filled
+        is_empty = is_missing(filled[m])
+        filled[m] = np.where(is_empty, filled[m + 1], filled[m])
+
+    # sostituisce eventuali pixel sempre vuoti tutto l'anno con zero
+    return np.nan_to_num(filled, nan=0.0)
 
 
 def extract_features_from_monthly_stack(monthly_stack):
     """
-    Estrae le 51 feature in modo vettorizzato NumPy a partire dallo stack dei 12 mesi.
-    
-    Parametri:
-    -----------
-    monthly_stack : np.ndarray
-        Array NumPy di forma (12, 6, H, W) oppure (12, 6, N_pixel).
-        - Asse 0: 12 Mesi (da Gennaio a Dicembre)
-        - Asse 1: 6 Bande ordinate:
+    Estrae le feature in modo vettorizzato NumPy a partire dallo stack dei 12 mesi.
+    Prende i 12 mesi di immagini satellitari e calcola tutte le feature per ciascun pixel in parallelo
+
+    Input: np.ndarray
+        array NumPy di forma (12, 6, h, w) oppure (12, 6, n_pixel).
+        - indice 0: 12 mesi
+        - indice 1: 6 bande ordinate:
             0: Blu (B02)
             1: Verde (B03)
             2: Rosso (B04)
             3: NIR (B08)
             4: SWIR1 (B11)
             5: SWIR2 (B12)
-        - Asse 2 e 3 (o solo 2): Dimensioni spaziali (H, W) o Pixel piatti.
-        
-    Ritorna:
-    --------
-    features_dict : dict
-        Dizionario contenente ciascuna delle 51 feature calcolata spazialmente.
-    features_matrix : np.ndarray
-        Matrice 2D di forma (H*W, 51) oppure (N_pixel, 51), pronta per model.predict().
+        - indici 2 e/o 3: dimensioni (h, w) o pixel.
+
+    Output: dict, np.ndarray
+        - dizionario contenente tutte le feature calcolate.
+        - matrice 2D di forma (h*w, n_feature) oppure (n_pixel, n_feature).
     """
     orig_shape = monthly_stack.shape
-    # Normalizza la forma a (12, 6, N_pixel) per calcoli ultra-rapidi
+    # normalizza la forma a (12, 6, n_pixel) per calcoli rapidi
     if len(orig_shape) == 4:
         n_months, n_bands, h, w = orig_shape
         flat_stack = monthly_stack.reshape(n_months, n_bands, -1).astype(np.float32)
@@ -112,83 +129,96 @@ def extract_features_from_monthly_stack(monthly_stack):
         flat_stack = monthly_stack.astype(np.float32)
         is_spatial = False
     else:
-        raise ValueError("monthly_stack deve avere 4 dimensioni (12, 6, H, W) o 3 (12, 6, N_pixel)")
+        raise ValueError(
+            "Il parametro di input deve avere 4 dimensioni (12, 6, h, w) o 3 (12, 6, n_pixel)"
+        )
 
     if n_months != 12 or n_bands != 6:
-        raise ValueError(f"Attesi 12 mesi e 6 bande, trovati: {n_months} mesi e {n_bands} bande.")
+        raise ValueError(
+            f"Attesi 12 mesi e 6 bande, trovati: {n_months} mesi e {n_bands} bande."
+        )
 
     n_pixels = flat_stack.shape[2]
     features_dict = {}
 
-    # -------------------------------------------------------------
-    # 1. MEDIE ANNUALI DI RIFLETTANZA PER LE 6 BANDE
-    # -------------------------------------------------------------
-    band_keys = ["Blu_B02", "Verde_B03", "Rosso_B04", "NIR_B08", "SWIR1_B11", "SWIR2_B12"]
-    for b_idx, b_name in enumerate(band_keys):
-        band_vals = flat_stack[:, b_idx, :]  # shape: (12, N_pixels)
-        valid = band_vals > 0.0
+    # ------------------------------------------------------
+    # Calcolo del valore medio annuale per ciascuna banda,
+    # escludendo eventuali valori mancanti o pari a zero.
+    band_list = [
+        "Blu_B02",
+        "Verde_B03",
+        "Rosso_B04",
+        "NIR_B08",
+        "SWIR1_B11",
+        "SWIR2_B12",
+    ]
+    for b_idx, b_name in enumerate(band_list):
+        band_values = flat_stack[:, b_idx, :]
+        valid = band_values > 0.0
         valid_counts = np.sum(valid, axis=0)
-        sums = np.sum(np.where(valid, band_vals, 0.0), axis=0)
+        sums = np.sum(np.where(valid, band_values, 0.0), axis=0)
         mean_band = np.where(valid_counts > 0, sums / np.maximum(valid_counts, 1), 0.0)
         features_dict[b_name] = mean_band
 
-    # -------------------------------------------------------------
-    # 2. SERIE TEMPORALI MENSILI (NDVI e NDWI)
-    # -------------------------------------------------------------
-    red_series = flat_stack[:, 2, :]    # B04
-    nir_series = flat_stack[:, 3, :]    # B08
-    swir1_series = flat_stack[:, 4, :]  # B11
-    swir2_series = flat_stack[:, 5, :]  # B12
+    # ------------------------------------------------------
+    # NDVI = (NIR - Rosso) / (NIR + Rosso)
+    # NDWI = (NIR - SWIR1) / (NIR + SWIR1)
 
-    # NDVI: (NIR - Red) / (NIR + Red)
+    red_series = flat_stack[:, 2, :]  # B04
+    nir_series = flat_stack[:, 3, :]  # B08
+    swir1_series = flat_stack[:, 4, :]  # B11
+
+    # NDVI mensile
     ndvi_denom = nir_series + red_series
     raw_ndvi = np.where(
         (red_series > 0) & (nir_series > 0) & (ndvi_denom > 0),
         (nir_series - red_series) / np.maximum(ndvi_denom, 1e-6),
-        0.0
+        0.0,
     )
     ndvi_series = fill_missing_series(raw_ndvi)
 
-    # NDWI: (NIR - SWIR1) / (NIR + SWIR1)
+    # NDWI mensile
     ndwi_denom = nir_series + swir1_series
     raw_ndwi = np.where(
         (nir_series > 0) & (swir1_series > 0) & (ndwi_denom > 0),
         (nir_series - swir1_series) / np.maximum(ndwi_denom, 1e-6),
-        0.0
+        0.0,
     )
     ndwi_series = fill_missing_series(raw_ndwi)
 
     for m in range(1, 13):
-        m_idx = m - 1
-        features_dict[f"NDVI_{m:02d}"] = ndvi_series[m_idx]
-        features_dict[f"NDWI_{m:02d}"] = ndwi_series[m_idx]
+        features_dict[f"NDVI_{m:02d}"] = ndvi_series[m - 1]
+        features_dict[f"NDWI_{m:02d}"] = ndwi_series[m - 1]
 
     # -------------------------------------------------------------
-    # 3. INDICATORI FENOLOGICI E STATISTICI (NDVI)
-    # -------------------------------------------------------------
+    # Statistiche annuali del vigore vegetativo (NDVI)
+
     features_dict["NDVI_max"] = np.max(ndvi_series, axis=0)
     features_dict["NDVI_min"] = np.min(ndvi_series, axis=0)
     features_dict["NDVI_amp"] = features_dict["NDVI_max"] - features_dict["NDVI_min"]
-    features_dict["Peak_Month"] = (np.argmax(ndvi_series, axis=0) + 1).astype(np.float32)
+    features_dict["Peak_Month"] = (np.argmax(ndvi_series, axis=0) + 1).astype(
+        np.float32
+    )
     features_dict["NDVI_mean"] = np.mean(ndvi_series, axis=0)
     features_dict["NDVI_std"] = np.std(ndvi_series, axis=0)
 
     # -------------------------------------------------------------
-    # 4. DIFFERENZIALI STAGIONALI (NDVI)
-    # ndvi_series indici 0..11 corrispondono a Gennaio..Dicembre
-    # -------------------------------------------------------------
-    features_dict["NDVI_diff_lug_apr"] = ndvi_series[6] - ndvi_series[3]   # Luglio (6) - Aprile (3)
-    features_dict["NDVI_diff_apr_gen"] = ndvi_series[3] - ndvi_series[0]   # Aprile (3) - Gennaio (0)
-    features_dict["NDVI_diff_set_lug"] = ndvi_series[8] - ndvi_series[6]   # Settembre (8) - Luglio (6)
-    
-    # Protezione divisione per zero in Orzo_Wheat_Ratio su pixel non vegetati / bordi
-    denom_orzo = np.where(np.abs(ndvi_series[4] + 0.01) < 1e-5, 1e-5, ndvi_series[4] + 0.01)
-    features_dict["Orzo_Wheat_Ratio"] = np.clip(ndvi_series[3] / denom_orzo, -50.0, 50.0)
-    features_dict["NDVI_senescence_rate"] = ndvi_series[5] - ndvi_series[4] # Giugno (5) - Maggio (4)
+    # Differenziali stagionali tra mesi
+
+    features_dict["NDVI_diff_lug_apr"] = ndvi_series[6] - ndvi_series[3]
+    features_dict["NDVI_diff_apr_gen"] = ndvi_series[3] - ndvi_series[0]
+    features_dict["NDVI_diff_set_lug"] = ndvi_series[8] - ndvi_series[6]
+
+    denom_orzo = np.where(
+        np.abs(ndvi_series[4] + 0.01) < 1e-5, 1e-5, ndvi_series[4] + 0.01
+    )
+    features_dict["Orzo_Wheat_Ratio"] = np.clip(
+        ndvi_series[3] / denom_orzo, -50.0, 50.0
+    )
+    features_dict["NDVI_senescence_rate"] = ndvi_series[5] - ndvi_series[4]
 
     # -------------------------------------------------------------
-    # 5. INDICATORI NDWI E RAPPORTI SWIR
-    # -------------------------------------------------------------
+    # Statistiche NDWI SWIR
     features_dict["NDWI_mean"] = np.mean(ndwi_series, axis=0)
     features_dict["NDWI_diff_lug_gen"] = ndwi_series[6] - ndwi_series[0]
 
@@ -196,90 +226,90 @@ def extract_features_from_monthly_stack(monthly_stack):
     swir1_b11 = features_dict["SWIR1_B11"]
     swir2_b12 = features_dict["SWIR2_B12"]
 
-    features_dict["SWIR_NIR_ratio"] = np.where(nir_b8 > 0, np.clip(swir1_b11 / (nir_b8 + 0.001), 0.0, 50.0), 0.0)
-    features_dict["SWIR_Cellulose_ratio"] = np.where(swir1_b11 > 0, np.clip(swir2_b12 / (swir1_b11 + 0.001), 0.0, 50.0), 0.0)
+    features_dict["SWIR_NIR_ratio"] = np.where(
+        nir_b8 > 0, np.clip(swir1_b11 / (nir_b8 + 0.001), 0.0, 50.0), 0.0
+    )
+    features_dict["SWIR_Cellulose_ratio"] = np.where(
+        swir1_b11 > 0, np.clip(swir2_b12 / (swir1_b11 + 0.001), 0.0, 50.0), 0.0
+    )
 
     # -------------------------------------------------------------
-    # 6. FENOLOGIA AVANZATA
-    # -------------------------------------------------------------
-    ndvi_winter = (ndvi_series[0] + ndvi_series[1] + ndvi_series[11]) / 3.0 # Gen + Feb + Dic
-    ndvi_summer = (ndvi_series[6] + ndvi_series[7]) / 2.0                   # Lug + Ago
+    # Indicatori avanzati del ciclo di vita della pianta
+
+    ndvi_winter = (ndvi_series[0] + ndvi_series[1] + ndvi_series[11]) / 3.0
+    ndvi_summer = (ndvi_series[6] + ndvi_series[7]) / 2.0
     features_dict["NDVI_winter"] = ndvi_winter
     features_dict["NDVI_summer_winter_diff"] = ndvi_summer - ndvi_winter
     features_dict["NDVI_AUC"] = np.sum(ndvi_series, axis=0)
-    features_dict["Active_Months_Count"] = np.sum(ndvi_series > 0.35, axis=0).astype(np.float32)
-    features_dict["Senescence_May_Apr"] = ndvi_series[4] - ndvi_series[3]   # Maggio (4) - Aprile (3)
-    features_dict["Greenup_Mar_Feb"] = ndvi_series[2] - ndvi_series[1]       # Marzo (2) - Febbraio (1)
+    features_dict["Active_Months_Count"] = np.sum(ndvi_series > 0.35, axis=0).astype(
+        np.float32
+    )
+    features_dict["Senescence_May_Apr"] = ndvi_series[4] - ndvi_series[3]
+    features_dict["Greenup_Mar_Feb"] = ndvi_series[2] - ndvi_series[1]
 
     # -------------------------------------------------------------
-    # COSTRUZIONE MATRICE ORDINATA RIGOROSAMENTE SECONDO FEATURE_NAMES
-    # -------------------------------------------------------------
-    feature_columns = [features_dict[name] for name in FEATURE_NAMES]
+    # Costruzione della matrice
+
+    feature_columns = [features_dict[name] for name in FEATURE_LIST]
     features_matrix = np.column_stack(feature_columns).astype(np.float32)
 
-    # Pulizia totale di eventuali NaN, inf e overflow per scikit-learn
+    # pulizia finale di eventuali NaN, inf e overflow
     features_matrix = np.nan_to_num(features_matrix, nan=0.0, posinf=0.0, neginf=0.0)
     features_matrix = np.clip(features_matrix, -1e5, 1e5).astype(np.float32)
 
     return features_dict, features_matrix
 
 
-def load_monthly_capitanata_rasters(folder_path, year=2023, max_size=None):
+def load_monthly_capitanata_rasters(directory_path, year=2023, max_size=None):
     """
-    Carica i 12 file GeoTIFF mensili della Capitanata dalla cartella specificata.
-    Opzionalmente ridimensiona (ricampiona) per contenere l'uso della RAM.
-    
-    Parametri:
-    -----------
-    folder_path : str or Path
-        Cartella contenente i file 'capitanata_{year}_{01..12}.tif'
-    year : int or str
-        Anno di interesse (default 2023)
-    max_size : int, optional
-        Se specificato, ricampiona l'immagine in modo che la dimensione massima (H o W) sia max_size.
-        Utile per testare la predizione senza saturare la RAM.
-        
-    Ritorna:
-    --------
-    monthly_stack : np.ndarray
-        Array di forma (12, 6, H, W)
-    profile : dict
-        Metadati rasterio del primo file utile (per georeferenziazione o export)
+    Carica i 12 file GeoTIFF mensili della Capitanata e li impila insieme in un unico
+    blocco 4D di forma (12 mesi, 6 bande, altezza, larghezza)
+
+    Input: str or Path, int or str, int or optional
+        - cartella contenente i file 'capitanata_{year}_{01..12}.tif'
+        - anno di interesse (default 2023)
+        - se specificato, ricampiona l'immagine in modo che la dimensione massima (h o w) sia max_size.
+          (utile per testare la predizione senza saturare la RAM).
+
+    Output: np.ndarray, dict
+        - array di forma (12, 6, h, w)
+        - metadati rasterio del primo file utile
     """
-    folder = Path(folder_path)
+    directory = Path(directory_path)
     monthly_arrays = []
-    base_profile = None
+    tif_profile = None
 
     for m in range(1, 13):
-        candidates = list(folder.glob(f"*{year}*_{m:02d}.tif"))
+        candidates = list(directory.glob(f"*{year}*_{m:02d}.tif"))
+
         if not candidates:
-            # Fallback generico
-            candidates = list(folder.glob(f"*_{m:02d}.tif"))
-        
-        if not candidates:
-            raise FileNotFoundError(f"Impossibile trovare il file TIF per il mese {m:02d} in {folder}")
+            raise FileNotFoundError(
+                f"Impossibile trovare il file TIF per il mese {m:02d} in {directory}"
+            )
 
         tif_path = candidates[0]
         with rasterio.open(tif_path) as src:
-            if base_profile is None:
-                base_profile = src.profile.copy()
-            
-            if max_size is not None:
-                orig_h, orig_w = src.shape
+            if tif_profile is None:
+                tif_profile = src.profile.copy()  # salva metadati (coordinate, crs...)
+
+            orig_h, orig_w = src.shape
+            if max_size is not None and max(orig_h, orig_w) > max_size:
+                # calcola le nuove dimensioni proporzionate
                 scale = max_size / max(orig_h, orig_w)
                 new_h = int(orig_h * scale)
                 new_w = int(orig_w * scale)
                 data = src.read(
-                    out_shape=(src.count, new_h, new_w),
-                    resampling=Resampling.bilinear
+                    out_shape=(src.count, new_h, new_w), resampling=Resampling.bilinear
                 )
             else:
                 data = src.read()
 
             if data.shape[0] != 6:
-                raise ValueError(f"Il file {tif_path.name} ha {data.shape[0]} bande (attese 6).")
+                raise ValueError(
+                    f"Il file {tif_path.name} ha {data.shape[0]} bande (attese 6)."
+                )
 
             monthly_arrays.append(data)
 
-    monthly_stack = np.stack(monthly_arrays, axis=0) # Forma: (12, 6, H, W)
-    return monthly_stack, base_profile
+    monthly_stack = np.stack(monthly_arrays, axis=0)
+    return monthly_stack, tif_profile
