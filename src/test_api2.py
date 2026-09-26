@@ -34,19 +34,25 @@ def download_area_month(
     file_out = os.path.join(out_dir, f"{name}_{year}_{month:02d}.tif")
 
     # Resume: se il file è già completo (> 200 MB), salta (a meno di overwrite=True)
-    if not overwrite and os.path.exists(file_out) and os.path.getsize(file_out) > 200_000_000:
-        print(f"Mese {month:02d} già presente e completo: {file_out} ({os.path.getsize(file_out)/(1024*1024):.1f} MB)")
+    if (
+        not overwrite
+        and os.path.exists(file_out)
+        and os.path.getsize(file_out) > 200_000_000
+    ):
+        print(
+            f"Mese {month:02d} già presente e completo: {file_out} ({os.path.getsize(file_out)/(1024*1024):.1f} MB)"
+        )
         return file_out
 
     print(f"\nScaricando {name} per {year}-{month:02d}...")
     last_day = calendar.monthrange(int(year), int(month))[1]
-    
+
     # 1. Ricerca scene nel mese per la sola BBox specificata
     search = client.search(
         collections=["sentinel-2-l2a"],
         bbox=bbox,
         datetime=f"{year}-{month:02d}-01/{year}-{month:02d}-{last_day:02d}",
-        query={"eo:cloud_cover": {"lt": 40}}
+        query={"eo:cloud_cover": {"lt": 40}},
     )
     items = list(search.items())
 
@@ -56,7 +62,7 @@ def download_area_month(
             collections=["sentinel-2-l2a"],
             bbox=bbox,
             datetime=f"{year}-{month:02d}-01/{year}-{month:02d}-{last_day:02d}",
-            query={"eo:cloud_cover": {"lt": 80}}
+            query={"eo:cloud_cover": {"lt": 80}},
         )
         items = list(search.items())
 
@@ -79,17 +85,24 @@ def download_area_month(
     selected_items = []
     tile_names = []
     for tile_key, tile_items in items_by_tile.items():
-        min_nodata = min(it.properties.get("s2:nodata_pixel_percentage", 0) for it in tile_items)
+        min_nodata = min(
+            it.properties.get("s2:nodata_pixel_percentage", 0) for it in tile_items
+        )
         # Filtra solo le scene che hanno copertura massima per quella tile (entro +15% dal minimo nodata)
         candidates = [
-            it for it in tile_items
+            it
+            for it in tile_items
             if it.properties.get("s2:nodata_pixel_percentage", 0) <= min_nodata + 15
         ]
-        best_it = min(candidates, key=lambda it: it.properties.get("eo:cloud_cover", 100))
+        best_it = min(
+            candidates, key=lambda it: it.properties.get("eo:cloud_cover", 100)
+        )
         selected_items.append(best_it)
         tile_names.append(tile_key)
 
-    print(f"  • Scene selezionate per coprire la Capitanata: {len(selected_items)} tile ({tile_names})")
+    print(
+        f"  • Scene selezionate per coprire la Capitanata: {len(selected_items)} tile ({tile_names})"
+    )
 
     # 3. Scarica, ritaglia e unisce ciascuna banda con feedback visivo
     band_arrays = []
@@ -113,7 +126,9 @@ def download_area_month(
             continue
 
         # Mosaico di tutte le tile dell'area per questa banda (nodata=0 evita che i bordi neri sovrascrivano i dati validi)
-        merged_band = merge_arrays(tile_crops, nodata=0) if len(tile_crops) > 1 else tile_crops[0]
+        merged_band = (
+            merge_arrays(tile_crops, nodata=0) if len(tile_crops) > 1 else tile_crops[0]
+        )
 
         # Allinea risoluzione (20m -> 10m) sulla prima banda
         if band_arrays and (
@@ -138,7 +153,7 @@ def download_area_month(
     temp_out = file_out + ".tmp.tif"
     merged.rio.to_raster(temp_out, compress="deflate", predictor=2, tiled=True)
     os.replace(temp_out, file_out)
-    
+
     file_size_mb = os.path.getsize(file_out) / (1024 * 1024)
     print(f"✅ Salvato {file_out} ({file_size_mb:.1f} MB)")
     return file_out
@@ -147,17 +162,40 @@ def download_area_month(
 def download_area(
     name,
     bbox,
-    year="2023",
+    years=["2023"],
     months=range(1, 13),
     out_dir="./data/processed/sentinel2_capitanata_area",
     overwrite=False,
 ):
-    """Scarica tutti i mesi richiesti per l'area data."""
-    print(f"Inizio download area '{name}' per l'anno {year}...")
-    downloaded = []
-    for m in months:
-        f = download_area_month(name, bbox, year, m, out_dir=out_dir, overwrite=overwrite)
-        if f:
-            downloaded.append(f)
-    print(f"\nFinito! Scaricati {len(downloaded)}/{len(list(months))} file.")
-    return downloaded
+    """Scarica tutti i mesi richiesti per l'area data su uno o più anni."""
+    if isinstance(years, (str, int)):
+        years = [str(years)]
+
+    months_list = list(months)
+    all_downloaded = []
+
+    for y in years:
+        year_str = str(y)
+        print("=" * 50)
+        print(f"Inizio download area '{name}' per l'anno {year_str}")
+        print("=" * 50)
+
+        year_downloaded = []
+        for m in months_list:
+            f = download_area_month(
+                name, bbox, year_str, m, out_dir=out_dir, overwrite=overwrite
+            )
+            if f:
+                year_downloaded.append(f)
+                all_downloaded.append(f)
+
+        print(
+            f"\nFinito anno {year_str}! Scaricati {len(year_downloaded)}/{len(months_list)} file."
+        )
+
+    print("\n" + "=" * 50)
+    print(
+        f"Download completato per tutti gli anni! Totale file: {len(all_downloaded)}/{len(years) * len(months_list)}"
+    )
+    print("=" * 50)
+    return all_downloaded
