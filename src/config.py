@@ -13,7 +13,7 @@ CAPITANATA_BBOX = [
 EXCLUDED_CROP_CLASSES = [3100, 3200, 1150]
 
 # anni campionati
-YEARS_TO_FETCH = ["2023", "2022"]
+YEARS_TO_FETCH = ["2023", "2022", "2021"]
 
 
 def is_in_capitanata(lon: float, lat: float) -> bool:
