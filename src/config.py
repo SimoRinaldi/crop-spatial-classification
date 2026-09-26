@@ -12,6 +12,9 @@ CAPITANATA_BBOX = [
 # 1150 -> "other cereals"
 EXCLUDED_CROP_CLASSES = [3100, 3200, 1150]
 
+# anni campionati
+YEARS_TO_FETCH = ["2023", "2022"]
+
 
 def is_in_capitanata(lon: float, lat: float) -> bool:
     min_lon, min_lat, max_lon, max_lat = CAPITANATA_BBOX
