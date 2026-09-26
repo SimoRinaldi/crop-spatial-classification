@@ -8,9 +8,13 @@ CAPITANATA_BBOX = [
 ]
 
 # classi da escludere a priori:
-# 3100/3200 -> classi "undecided"
-# 1150 -> "other cereals"
-EXCLUDED_CROP_CLASSES = [3100, 3200, 1150]
+EXCLUDED_CROP_CLASSES = [
+    0,  # -> all non-cropland areas
+    3100,  # -> Undecided arable crop
+    3200,  # -> Undecided perennial crop
+    65534,  # -> water / sea
+    65535,  # -> outside area
+]
 
 # anni campionati
 YEARS_TO_FETCH = ["2023", "2022", "2021"]
