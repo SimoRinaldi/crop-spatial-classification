@@ -8,9 +8,9 @@ from rasterio.enums import Resampling
 # elenco ordinato e dettagliato delle feature
 FEATURE_LIST = [
     # Colori e bande satellitari (medie di tutto l'anno)
-    # "Blu_B02",  # riflettanza della luce blu
-    # "Verde_B03",  # riflettanza della luce verde
-    # "Rosso_B04",  # riflettanza della luce rossa (assorbita dalle piante vive)
+    "Blu_B02",  # riflettanza della luce blu
+    "Verde_B03",  # riflettanza della luce verde
+    "Rosso_B04",  # riflettanza della luce rossa (assorbita dalle piante vive)
     "NIR_B08",  # vicino infrarosso (le foglie sane e dense ne riflettono tantissimo)
     "SWIR1_B11",  # infrarosso a onde corte 1 (sensibile all'umidità del suolo e delle foglie)
     "SWIR2_B12",  # infrarosso a onde corte 2 (sensibile a residui secchi, rami e cellulosa)
@@ -46,7 +46,7 @@ FEATURE_LIST = [
     "NDVI_max",  # il massimo picco di verde raggiunto durante l'anno
     "NDVI_min",  # il minimo di verde nell'anno (inverno o dopo il raccolto)
     "NDVI_amp",  # escursione annuale (differenza tra massimo e minimo vigore)
-    # "Peak_Month",  # il mese dell'anno (1-12) in cui la pianta è stata al massimo splendore
+    "Peak_Month",  # il mese dell'anno (1-12) in cui la pianta è stata al massimo splendore
     "NDVI_mean",  # media del vigore sull'anno (alta per sempreverdi come ulivi, bassa per colture brevi)
     "NDVI_std",  # quanto varia il vigore nel tempo (stabile per boschi/ulivi, altalenante per cereali)
     # Differenze tra mesi chiave (aiutano a distinguere le colture)
@@ -56,7 +56,7 @@ FEATURE_LIST = [
     "Orzo_Wheat_Ratio",  # confronto tra aprile e maggio (l'orzo matura e ingiallisce prima del grano duro)
     "NDVI_senescence_rate",  # velocità con cui la pianta si secca tra maggio e giugno
     # Statistiche sull'idratazione (ndwi)
-    # "NDWI_mean",  # idratazione media durante tutto l'anno
+    "NDWI_mean",  # idratazione media durante tutto l'anno
     "NDWI_diff_lug_gen",  # disidratazione estiva rispetto all'inverno
     # Struttura della pianta e residui secchi
     "SWIR_NIR_ratio",  # rapporto tra secchezza e vigore fogliare
@@ -65,7 +65,7 @@ FEATURE_LIST = [
     "NDVI_winter",  # vigore medio invernale (gennaio, febbraio, dicembre)
     "NDVI_summer_winter_diff",  # contrasto tra estate e inverno
     "NDVI_AUC",  # biomassa totale prodotta nell'anno (area totale sotto la curva di crescita)
-    # "Active_Months_Count",  # quanti mesi all'anno il campo è rimasto effettivamente verde
+    "Active_Months_Count",  # quanti mesi all'anno il campo è rimasto effettivamente verde
     "Senescence_May_Apr",  # ingiallimento tra aprile e maggio
     "Greenup_Mar_Feb",  # risveglio vegetativo tra febbraio e marzo
 ]
