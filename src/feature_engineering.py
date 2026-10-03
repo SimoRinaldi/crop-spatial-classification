@@ -248,6 +248,7 @@ def extract_features_from_monthly_stack(monthly_stack):
     # Costruzione della matrice
 
     feature_columns = [features_dict[name] for name in FEATURE_LIST]
+    print(f"Test: {len(feature_columns)}")
     features_matrix = np.column_stack(feature_columns).astype(np.float32)
 
     # pulizia finale di eventuali NaN, inf e overflow
