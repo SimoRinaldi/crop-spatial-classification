@@ -9,3 +9,4 @@ tqdm
 matplotlib
 seaborn
 joblib
+ipython
