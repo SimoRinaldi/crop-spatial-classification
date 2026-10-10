@@ -67,7 +67,7 @@ def download_area_month(
         items = list(search.items())
 
     if not items:
-        print(f"⚠️ Nessuna immagine trovata per {year}-{month:02d}")
+        print(f"Nessuna immagine trovata per {year}-{month:02d}")
         return None
 
     # 2. Per ciascuna tile MGRS, seleziona la scena a copertura intera con minor nuvolosità.
@@ -140,7 +140,7 @@ def download_area_month(
         band_arrays.append(merged_band)
 
     if not band_arrays:
-        print(f"⚠️ Nessuna banda scaricata per {year}-{month:02d}")
+        print(f"Nessuna banda scaricata per {year}-{month:02d}")
         return None
 
     # 4. Merge delle 6 bande nel singolo GeoTIFF multibanda
@@ -155,7 +155,7 @@ def download_area_month(
     os.replace(temp_out, file_out)
 
     file_size_mb = os.path.getsize(file_out) / (1024 * 1024)
-    print(f"✅ Salvato {file_out} ({file_size_mb:.1f} MB)")
+    print(f"Salvato {file_out} ({file_size_mb:.1f} MB)")
     return file_out
 
 
