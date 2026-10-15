@@ -1,6 +1,8 @@
+import gc
 import os
 import calendar
 from pathlib import Path
+import rasterio
 import rioxarray
 from rioxarray.merge import merge_arrays
 import xarray
@@ -9,6 +11,7 @@ from pystac_client import Client
 # Accelerazioni e accesso pubblico per bucket AWS S3
 os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
 os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
+os.environ["GDAL_CACHEMAX"] = "256"
 
 STAC_API_URL = "https://earth-search.aws.element84.com/v1"
 client = Client.open(STAC_API_URL)
@@ -33,16 +36,17 @@ def download_area_month(
     os.makedirs(out_dir, exist_ok=True)
     file_out = os.path.join(out_dir, f"{name}_{year}_{month:02d}.tif")
 
-    # Resume: se il file è già completo (> 200 MB), salta (a meno di overwrite=True)
-    if (
-        not overwrite
-        and os.path.exists(file_out)
-        and os.path.getsize(file_out) > 200_000_000
-    ):
-        print(
-            f"Mese {month:02d} già presente e completo: {file_out} ({os.path.getsize(file_out)/(1024*1024):.1f} MB)"
-        )
-        return file_out
+    # Resume: se il file è già presente, integro e ha 6 bande, salta il download
+    if not overwrite and os.path.exists(file_out) and os.path.getsize(file_out) > 5_000_000:
+        try:
+            with rasterio.open(file_out) as test_src:
+                if test_src.count == 6:
+                    print(
+                        f"Mese {month:02d} già presente e completo: {file_out} ({os.path.getsize(file_out)/(1024*1024):.1f} MB)"
+                    )
+                    return file_out
+        except Exception:
+            pass
 
     print(f"\nScaricando {name} per {year}-{month:02d}...")
     last_day = calendar.monthrange(int(year), int(month))[1]
@@ -113,12 +117,12 @@ def download_area_month(
             if b in it.assets:
                 href = it.assets[b].href
                 try:
-                    ds = rioxarray.open_rasterio(href)
-                    cropped = ds.rio.clip_box(*bbox, crs="EPSG:4326")
-                    if "band" in cropped.dims and cropped.sizes["band"] == 1:
-                        cropped = cropped.squeeze("band", drop=True)
-                    cropped.rio.write_nodata(0, inplace=True)
-                    tile_crops.append(cropped)
+                    with rioxarray.open_rasterio(href) as ds:
+                        cropped = ds.rio.clip_box(*bbox, crs="EPSG:4326").load()
+                        if "band" in cropped.dims and cropped.sizes["band"] == 1:
+                            cropped = cropped.squeeze("band", drop=True)
+                        cropped.rio.write_nodata(0, inplace=True)
+                        tile_crops.append(cropped)
                 except Exception:
                     pass
 
@@ -138,6 +142,7 @@ def download_area_month(
             merged_band = merged_band.rio.reproject_match(band_arrays[0])
 
         band_arrays.append(merged_band)
+        del tile_crops
 
     if not band_arrays:
         print(f"Nessuna banda scaricata per {year}-{month:02d}")
@@ -156,6 +161,12 @@ def download_area_month(
 
     file_size_mb = os.path.getsize(file_out) / (1024 * 1024)
     print(f"Salvato {file_out} ({file_size_mb:.1f} MB)")
+
+    # Pulizia memoria RAM immediata
+    del merged
+    del band_arrays
+    gc.collect()
+
     return file_out
 
 
@@ -188,6 +199,7 @@ def download_area(
             if f:
                 year_downloaded.append(f)
                 all_downloaded.append(f)
+            gc.collect()
 
         print(
             f"\nFinito anno {year_str}! Scaricati {len(year_downloaded)}/{len(months_list)} file."
