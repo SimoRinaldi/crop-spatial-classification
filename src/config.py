@@ -30,7 +30,7 @@ def is_in_capitanata(lon: float, lat: float) -> bool:
     return (min_lon <= lon <= max_lon) and (min_lat <= lat <= max_lat)
 
 
-def setup_environment(base_dir=None, git_branch="main"):
+def setup_environment(base_dir=None, git_branch="zone-test"):
     """
     Inizializza l'ambiente di esecuzione (Google Colab o Locale).
     Se eseguito su Colab, monta Google Drive e configura l'accesso allo storage condiviso.
@@ -38,7 +38,7 @@ def setup_environment(base_dir=None, git_branch="main"):
     """
     if "google.colab" in sys.modules:
         print("Ambiente Colab rilevato. Inizializzazione in corso...")
-        from google.colab import drive
+        from google.colab import drive  # type: ignore
 
         if not os.path.exists("/content/drive"):
             drive.mount("/content/drive")
@@ -82,7 +82,9 @@ def setup_environment(base_dir=None, git_branch="main"):
     if raw_dir.exists():
         print(f"Collegamento ai dati riuscito! Cartella raw: {raw_dir}")
     else:
-        print(f"Attenzione: Cartella non trovata in {raw_dir}. Verifica il percorso o il mount.")
+        print(
+            f"Attenzione: Cartella non trovata in {raw_dir}. Verifica il percorso o il mount."
+        )
 
     return data_dir, raw_dir, interim_dir, processed_dir
 
