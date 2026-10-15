@@ -11,6 +11,13 @@ CAPITANATA_BBOX = [
     41.92848568568325,  # max_lat (nord)
 ]
 
+VICINO_CAPITANATA_BBOX = [
+    14.5536,  # min_lon (ovest)
+    41.8387,  # min_lat (sud)
+    15.8382,  # max_lon (est)
+    42.8017,  # max_lat (nord)
+]
+
 # Classi da escludere a priori:
 EXCLUDED_CROP_CLASSES = [
     0,  # -> all non-cropland areas
