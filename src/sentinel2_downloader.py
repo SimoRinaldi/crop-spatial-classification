@@ -101,7 +101,7 @@ def download_area_month(
         tile_names.append(tile_key)
 
     print(
-        f"  • Scene selezionate per coprire la Capitanata: {len(selected_items)} tile ({tile_names})"
+        f"  • Scene selezionate per coprire la zona {name}: {len(selected_items)} tile ({tile_names})"
     )
 
     # 3. Scarica, ritaglia e unisce ciascuna banda con feedback visivo
