@@ -1,7 +1,3 @@
-import os
-import sys
-from pathlib import Path
-
 # Confini geografici della Capitanata
 # (EPSG: 4326 min_lon, min_lat, max_lon, max_lat)
 CAPITANATA_BBOX = [

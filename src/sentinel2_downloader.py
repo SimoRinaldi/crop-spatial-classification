@@ -1,7 +1,6 @@
 import gc
 import os
 import calendar
-from pathlib import Path
 import rasterio
 import rioxarray
 from rioxarray.merge import merge_arrays
@@ -37,7 +36,11 @@ def download_area_month(
     file_out = os.path.join(out_dir, f"{name}_{year}_{month:02d}.tif")
 
     # Resume: se il file è già presente, integro e ha 6 bande, salta il download
-    if not overwrite and os.path.exists(file_out) and os.path.getsize(file_out) > 5_000_000:
+    if (
+        not overwrite
+        and os.path.exists(file_out)
+        and os.path.getsize(file_out) > 5_000_000
+    ):
         try:
             with rasterio.open(file_out) as test_src:
                 if test_src.count == 6:
